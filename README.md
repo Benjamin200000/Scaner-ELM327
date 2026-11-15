@@ -163,11 +163,47 @@ aceleración.
   comparativos, funciones, terminal de debug
 - Historial en IndexedDB
 
+- Capa KWP2000 (ISO 14230-3): sesiones, testerPresent periódico,
+  respuestas negativas traducidas, lectura por identificador local
+- Funciones de servicio con precondiciones verificadas contra datos reales,
+  modo simulación y confirmación doble
+
 **Modelado pero no implementado**
 
-- Funciones de fabricante (ver límite 3). La matriz de compatibilidad está
-  en `src/core/capabilities.ts` y se muestra en la pantalla Funciones.
+- Regeneración de DPF: declarada con sus condiciones, deliberadamente sin
+  secuencia. Es la operación de mayor riesgo físico del catálogo y no se
+  publica una secuencia sin verificar para algo que calienta el escape a
+  más de 600 °C con el vehículo parado.
 - Bloques de medición de VAG, datos congelados (modo 02), informe en PDF
+
+### Funciones de servicio: cómo están protegidas
+
+Toda rutina que escribe en la ECU pasa por una puerta en
+`src/core/service/runner.ts`, no por una comprobación en la interfaz:
+
+1. Una rutina sin secuencia implementada no corre nunca, ni en simulación.
+2. Una rutina cuya secuencia **no está verificada** contra una ECU real solo
+   corre en modo simulación.
+3. Las precondiciones se evalúan contra datos medidos, no contra una lista
+   para tildar a mano. En modo real, si una no se cumple, no se envía un
+   solo byte.
+4. En una rutina de riesgo físico, una precondición que **no se puede
+   verificar** bloquea igual que una que no se cumple. No saber si el motor
+   está detenido no es lo mismo que saber que lo está.
+5. Si un paso falla, la secuencia se corta. Una secuencia a medias es peor
+   que una no empezada.
+6. Las escrituras exigen habilitar el modo avanzado y una confirmación que
+   enumera los pasos que modifican la ECU, con sus bytes.
+
+De las cuatro rutinas del catálogo, **solo el borrado de códigos está
+verificado**, porque es la única cuya secuencia está en norma pública y es
+idéntica en todo vehículo OBD-II. Las de VAG siguen la norma pero su
+identificador de bloque es específico de la familia de ECU.
+
+**El modo simulación es el camino para verificarlas.** Arma la secuencia
+completa y muestra byte por byte lo que se enviaría, sin enviar nada. Con el
+vehículo delante se contrasta contra la documentación, y recién ahí se marca
+`verified: true`.
 
 **Cobertura honesta de la base de conocimiento**
 
@@ -180,3 +216,17 @@ Las escalas de los PID ampliados (0x70, 0x78, 0x7A, 0x7C) están marcadas
 `verified: false`: su layout varía entre fabricantes y no se pudo verificar
 contra norma ni contra una ECU real. La UI las muestra marcadas como tales en
 modo técnico.
+
+### Cómo verificar contra un vehículo real
+
+1. Conectar el adaptador y entrar a **Terminal**
+2. Activar **Debug**: se registra cada TX/RX con su tiempo de ida y vuelta
+3. Recorrer las pantallas y, si corresponde, simular la rutina de servicio
+4. **Exportar sesión**: descarga un JSON con la traza completa, el VIN, la
+   ECU, los PID soportados, los que todavía no se decodifican y los valores
+   leídos
+
+Ese archivo es lo que permite corregir una escala o confirmar una secuencia
+sin tener el vehículo delante. La pantalla de conexión además muestra un
+**veredicto del adaptador**: qué se puede hacer con el que está conectado y
+dónde está el techo.

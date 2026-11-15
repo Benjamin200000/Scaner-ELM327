@@ -14,6 +14,9 @@ import { type EvaluatedParam, evaluateParam } from '@/core/engine/evaluate';
 import { relevantSystems, type SystemDef } from '@/core/engine/systems';
 import type { VehicleContext } from '@/knowledge';
 import { History } from './history';
+import { ServiceRunner, gate, type GateResult } from '@/core/service/runner';
+import { routineById } from '@/core/service/routines';
+import type { RoutineContext, RunMode, RunResult, StepOutcome } from '@/core/service/types';
 
 /**
  * Estado de la aplicación.
@@ -65,6 +68,13 @@ interface AppState {
   simProfileId: string;
   forcedProtocol: string;
 
+  /** Rutina de servicio en curso o terminada. */
+  routineRun: RunResult | null;
+  routineOutcomes: StepOutcome[];
+  routineBusy: boolean;
+  /** Habilita las rutinas de escritura. Apagado por defecto a propósito. */
+  advanced: boolean;
+
   setScreen(s: Screen): void;
   setMode(m: DetailMode): void;
   setManual(m: Partial<VehicleManual>): void;
@@ -72,6 +82,13 @@ interface AppState {
   setForcedProtocol(p: string): void;
   setDebug(on: boolean): void;
   setPaused(on: boolean): void;
+  setAdvanced(on: boolean): void;
+  runRoutine(routineId: string, mode: RunMode): Promise<void>;
+  cancelRoutine(): void;
+  clearRoutineRun(): void;
+  routineContext(): RoutineContext;
+  gateRoutine(routineId: string, mode: RunMode): GateResult | null;
+  exportTrace(): void;
 
   connect(kind: TransportKind): Promise<void>;
   disconnect(): Promise<void>;
@@ -102,6 +119,7 @@ function makeTransport(kind: TransportKind, simProfileId: string): Transport {
 }
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
+let cancelRequested = false;
 
 export const useApp = create<AppState>((set, get) => ({
   screen: 'conexion',
@@ -123,6 +141,11 @@ export const useApp = create<AppState>((set, get) => ({
   simProfileId: 'tdi-2.0-dpf',
   forcedProtocol: '0',
 
+  routineRun: null,
+  routineOutcomes: [],
+  routineBusy: false,
+  advanced: false,
+
   setScreen: (screen) => set({ screen }),
   setMode: (mode) => set({ mode }),
   setManual: (m) => set((s) => ({ manual: { ...s.manual, ...m } })),
@@ -130,7 +153,111 @@ export const useApp = create<AppState>((set, get) => ({
   setForcedProtocol: (forcedProtocol) => set({ forcedProtocol }),
   setDebug: (debug) => set({ debug }),
   setPaused: (paused) => set({ paused }),
+  setAdvanced: (advanced) => set({ advanced }),
   clearFault: () => set({ fault: null }),
+  clearRoutineRun: () => set({ routineRun: null, routineOutcomes: [] }),
+  cancelRoutine: () => { cancelRequested = true; },
+
+  routineContext() {
+    const { info, values, dtcs, manual } = get();
+    return {
+      protocol: info?.protocol ?? null,
+      values,
+      available: info?.availableParams ?? new Set<string>(),
+      dtcs,
+      voltage: info?.voltage ?? null,
+      make: manual.make,
+    };
+  },
+
+  gateRoutine(routineId, mode) {
+    const routine = routineById(routineId);
+    if (!routine) return null;
+    return gate(routine, get().routineContext(), mode);
+  },
+
+  /**
+   * Ejecuta una rutina de servicio.
+   *
+   * El sondeo se pausa durante la ejecución: un ELM327 atiende un comando
+   * por vez, y dejar el ciclo de datos en vivo compitiendo con una
+   * secuencia de escritura es una forma segura de que falle a la mitad.
+   */
+  async runRoutine(routineId, mode) {
+    const { session } = get();
+    const routine = routineById(routineId);
+    if (!session || !routine) return;
+
+    cancelRequested = false;
+    const wasPaused = get().paused;
+    set({ routineBusy: true, routineRun: null, routineOutcomes: [], paused: true });
+
+    try {
+      const runner = new ServiceRunner(session.driver);
+      const result = await runner.run(routine, get().routineContext(), {
+        mode,
+        onProgress: (outcomes) => set({ routineOutcomes: [...outcomes] }),
+        shouldAbort: () => cancelRequested,
+      });
+      set({ routineRun: result, routineOutcomes: result.outcomes });
+
+      // Tras un borrado la lista de códigos en pantalla quedó vieja.
+      if (result.completed && mode === 'real' && routineId === 'obd2.clear-dtc') {
+        await get().refreshDtcs();
+      }
+    } catch (err) {
+      set({ fault: toFault(err) });
+    } finally {
+      set({ routineBusy: false, paused: wasPaused });
+    }
+  },
+
+  /**
+   * Descarga el registro completo de la sesión.
+   *
+   * Es la pieza que convierte un vehículo real en datos verificables: con
+   * este archivo se puede contrastar la escala de un PID ampliado o la
+   * respuesta de una ECU sin tener el auto delante.
+   */
+  exportTrace() {
+    const { session, info, manual, trace, values, dtcs } = get();
+    const payload = {
+      exportadoEl: new Date().toISOString(),
+      app: 'scaner-elm327',
+      vehiculo: {
+        ...manual,
+        vin: info?.identity.vin ?? null,
+        ecu: info?.identity.ecuName ?? null,
+        calibracion: info?.identity.calibrationId ?? null,
+      },
+      adaptador: info?.adapter ?? null,
+      protocolo: info?.protocol?.name ?? null,
+      transporte: session?.transport.info ?? null,
+      pidSoportados: [...(info?.supportedPids ?? [])]
+        .map((p) => p.toString(16).toUpperCase().padStart(2, '0')),
+      pidSinDecodificar: session?.undecodedPids().map(
+        (p) => p.toString(16).toUpperCase().padStart(2, '0')) ?? [],
+      codigos: dtcs,
+      valores: Object.fromEntries(values),
+      // El registro crudo es lo más valioso del archivo.
+      traza: (trace.length > 0 ? trace : session?.getTrace() ?? []).map((t) => ({
+        at: new Date(t.at).toISOString(),
+        dir: t.direction,
+        text: t.text,
+        ms: t.elapsedMs ?? null,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    a.download = `sesion-${manual.make ?? 'vehiculo'}-${stamp}.json`.toLowerCase();
+    a.click();
+    URL.revokeObjectURL(url);
+  },
 
   async connect(kind) {
     const { simProfileId, forcedProtocol, manual } = get();

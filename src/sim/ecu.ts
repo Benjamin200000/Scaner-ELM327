@@ -40,6 +40,16 @@ export class Elm327Simulator {
   private state: SimEngineState;
   private flags: ElmFlags;
   private clearedAt: number | null = null;
+  /** Estado de la ECU KWP2000 que hay detrás del adaptador. */
+  private kwp = {
+    session: 0x81,          // sesión por defecto
+    lastTesterPresent: 0,
+    /** Intervalo de servicio: km y días restantes. */
+    serviceDistanceKm: 1500,
+    serviceDays: 42,
+    /** Cuántas veces se reinició, para verificar en los tests. */
+    serviceResets: 0,
+  };
 
   constructor(opts: SimOptions = {}) {
     this.profile = opts.profile ?? golf20_8v;
@@ -175,10 +185,117 @@ export class Elm327Simulator {
         return this.mode09(pid);
       case '0A':
         return this.mode0A();
-      default:
+      default: {
+        const sid = parseInt(mode, 16);
+        if (sid >= 0x10) return this.kwpService(sid, hex.slice(2));
         // Un ELM327 real devuelve esto cuando la ECU rechaza el servicio.
         return ['NO DATA'];
+      }
     }
+  }
+
+  /**
+   * ECU KWP2000 mínima (ISO 14230-3).
+   *
+   * Está acá para que las rutinas de servicio se puedan ejercitar completas
+   * sin vehículo: sesión extendida, testerPresent, respuestas negativas y la
+   * diferencia entre lo que la ECU acepta en sesión por defecto y lo que
+   * exige sesión extendida.
+   */
+  private kwpService(sid: number, argHex: string): string[] {
+    const args = bytesOf(argHex);
+    const positive = (data: number[] = []): string[] =>
+      [this.frame([byte(sid + 0x40), ...data.map(byte)])];
+    const negative = (nrc: number): string[] =>
+      [this.frame(['7F', byte(sid), byte(nrc)])];
+
+    const extended = this.kwp.session === 0x85 || this.kwp.session === 0x86;
+
+    switch (sid) {
+      case 0x10: {
+        const type = args[0];
+        if (type === undefined) return negative(0x12);
+        // La sesión de programación no se habilita en el simulador: es la
+        // que puede dejar una ECU inutilizable y no hay razón para
+        // practicarla contra un modelo de juguete.
+        if (type === 0x86) return negative(0x33);
+        if (type !== 0x81 && type !== 0x85 && type !== 0x89) return negative(0x12);
+        this.kwp.session = type;
+        return positive([type]);
+      }
+
+      case 0x3e: // testerPresent
+        this.kwp.lastTesterPresent = Date.now();
+        // Subfunción 0x02: la ECU no debe responder.
+        if (args[0] === 0x02) return [];
+        return positive();
+
+      case 0x20: // stopDiagnosticSession
+        this.kwp.session = 0x81;
+        return positive();
+
+      case 0x1a: { // readEcuIdentification
+        const id = args[0];
+        if (id === undefined) return negative(0x12);
+        const text = id === 0x9b ? this.profile.ecuName
+          : id === 0x94 ? this.profile.calId
+          : id === 0x90 ? this.profile.vin
+          : null;
+        if (text === null) return negative(0x31);
+        const chars = Array.from(new TextEncoder().encode(text), (b) => b);
+        return positive([id, ...chars]);
+      }
+
+      case 0x21: { // readDataByLocalIdentifier
+        const id = args[0];
+        if (id === undefined) return negative(0x12);
+        // 0x30: bloque con el intervalo de servicio.
+        if (id === 0x30) {
+          const km = Math.round(this.kwp.serviceDistanceKm / 100);
+          return positive([id, km >> 8, km & 0xff, this.kwp.serviceDays]);
+        }
+        return negative(0x31);
+      }
+
+      case 0x3b: { // writeDataByLocalIdentifier
+        const id = args[0];
+        if (id === undefined) return negative(0x12);
+        // Escribir exige sesión extendida. Es la condición que más se
+        // olvida y la que hace fallar las rutinas en la práctica.
+        if (!extended) return negative(0x80);
+        if (id !== 0x30) return negative(0x31);
+        this.kwp.serviceDistanceKm = 15000;
+        this.kwp.serviceDays = 365;
+        this.kwp.serviceResets += 1;
+        return positive([id]);
+      }
+
+      case 0x31: { // startRoutineByLocalIdentifier
+        if (!extended) return negative(0x80);
+        const routine = args[0];
+        if (routine === undefined) return negative(0x12);
+        // Una rutina que exige el motor detenido: si gira, condiciones
+        // no cumplidas. Sirve para probar el manejo de ese caso.
+        if (this.state.rpm > 100) return negative(0x22);
+        return positive([routine]);
+      }
+
+      case 0x27: // securityAccess
+        return negative(0x33);
+
+      default:
+        return negative(0x11); // servicio no soportado
+    }
+  }
+
+  /** Cuántas veces se reinició el intervalo de servicio. Para los tests. */
+  get serviceResetCount(): number {
+    return this.kwp.serviceResets;
+  }
+
+  /** Sesión de diagnóstico activa. Para los tests. */
+  get kwpSession(): number {
+    return this.kwp.session;
   }
 
   private mode01(pid: string): string[] {
@@ -395,6 +512,14 @@ export class Elm327Simulator {
       : bytes;
     return this.flags.spaces ? out.join(' ') : out.join('');
   }
+}
+
+function bytesOf(hex: string): number[] {
+  const out: number[] = [];
+  for (let i = 0; i + 1 < hex.length; i += 2) {
+    out.push(parseInt(hex.slice(i, i + 2), 16));
+  }
+  return out;
 }
 
 const byte = (v: number): string =>

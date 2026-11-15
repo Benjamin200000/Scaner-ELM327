@@ -5,6 +5,7 @@ import type { TransportKind } from '@/core/transport/types';
 import { PROTOCOLS } from '@/core/elm327/protocols';
 import { PROFILES } from '@/sim/profiles';
 import { Button, Field, Notice, Panel } from '../parts/Panel';
+import { AdapterVerdict } from '../parts/AdapterVerdict';
 import { LinkDot } from '../parts/Status';
 
 /**
@@ -102,6 +103,8 @@ export function Connect() {
           </div>
         )}
       </Panel>
+
+      {connected && <AdapterVerdict info={info} transport={tInfo} />}
 
       {fault !== null && (
         <Notice tone="fail" title={fault.title}>

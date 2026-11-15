@@ -14,7 +14,7 @@ import { Button, Panel } from '../parts/Panel';
  * trabajo que no hace falta mientras no se esté depurando.
  */
 export function Terminal() {
-  const { trace, debug, setDebug, session } = useApp();
+  const { trace, debug, setDebug, session, exportTrace } = useApp();
   const end = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,14 +39,23 @@ export function Terminal() {
             >
               {debug ? 'Debug activo' : 'Activar debug'}
             </Button>
+            <Button disabled={session === null} onClick={exportTrace}>
+              Exportar sesión
+            </Button>
           </span>
         }
       >
         {!debug && trace.length === 0 && (
-          <div style={{ padding: 12, fontSize: 12, color: 'var(--color-ink-dim)' }}>
+          <div style={{ padding: 12, fontSize: 12, color: 'var(--color-ink-dim)',
+            lineHeight: 1.6 }}>
             El modo debug está apagado. Al activarlo se registra cada comando
             enviado al adaptador, su respuesta, el tiempo de ida y vuelta y los
             errores de enlace.
+            <br />
+            <strong>Exportar sesión</strong> descarga un archivo con esa traza
+            más el VIN, la ECU, los PID soportados, los que todavía no se
+            decodifican y los valores leídos. Es el insumo para verificar
+            escalas contra un vehículo real.
           </div>
         )}
 
