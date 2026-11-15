@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useApp } from '@/state/store';
 import { DIRECCION } from '@/core/kline/engine';
 import { Button, Field, Notice, Panel } from '../parts/Panel';
+import { buscarGrupoVag, nombreCampo } from '@/knowledge/vag/groups';
 
 /**
  * Diagnóstico VAG por K-Line (KW1281).
@@ -99,7 +100,9 @@ export function Vag() {
             </div>
           </Panel>
 
-          <Panel title="Grupo de medición" aside={
+          <Panel title={buscarGrupoVag(kline.grupoNum)
+            ? `Grupo ${kline.grupoNum} · ${buscarGrupoVag(kline.grupoNum)!.titulo}`
+            : `Grupo de medición ${kline.grupoNum}`} aside={
             <span className="label" style={{ color: 'var(--color-ink-dim)' }}>en vivo</span>
           }>
             <div style={{ padding: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', borderBottom: '1px solid var(--color-line-soft)' }}>
@@ -117,7 +120,7 @@ export function Vag() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(180px,50%),1fr))' }}>
               {(kline.grupo?.mediciones ?? []).map((m, i) => (
                 <div key={i} className="tile">
-                  <div className="label">Campo {i + 1}{m.value === null ? '' : ` · cód ${m.code}`}</div>
+                  <div className="label">{nombreCampo(kline.grupoNum, i)}</div>
                   <div className="num tile-valor" style={{ fontSize: 24 }}>
                     {m.value !== null ? m.value.toFixed(1) : m.text}
                     {m.value !== null && <span className="tile-unidad">{m.unit}</span>}
@@ -143,22 +146,25 @@ export function Vag() {
               <div style={{ padding: 12, fontSize: 12, color: 'var(--color-ok)' }}>Sin fallas almacenadas.</div>
             ) : (
               kline.fallas.map((f) => (
-                <div key={f.codigo} className="row" style={{ gridTemplateColumns: 'auto minmax(0,1fr) auto' }}>
-                  <span className="num" style={{ fontSize: 15 }}>{f.codigo}</span>
-                  <span style={{ fontSize: 11.5, color: 'var(--color-ink-faint)' }}>
-                    estado 0x{f.estado.toString(16).toUpperCase().padStart(2, '0')}
-                  </span>
-                  <span className="label" style={{ color: f.presente ? 'var(--color-fail)' : 'var(--color-warn)' }}>
-                    {f.presente ? 'Presente' : 'Esporádica'}
-                  </span>
+                <div key={f.codigo} className="row" style={{ display: 'block' }}>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                    <span className="num" style={{ fontSize: 15 }}>{f.codigo}</span>
+                    {f.sistema !== null && <span className="label">{f.sistema}</span>}
+                    <span className="label" style={{ marginLeft: 'auto', color: f.presente ? 'var(--color-fail)' : 'var(--color-warn)' }}>
+                      {f.presente ? 'Presente' : 'Esporádica'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12.5, marginTop: 2, color: f.descripcion ? 'var(--color-ink)' : 'var(--color-ink-faint)' }}>
+                    {f.descripcion ?? 'Sin descripción en la tabla · estado 0x' + f.estado.toString(16).toUpperCase().padStart(2, '0')}
+                  </div>
                 </div>
               ))
             )}
             <div style={{ padding: 10, borderTop: '1px solid var(--color-line-soft)' }}>
               <p style={{ fontSize: 11, color: 'var(--color-ink-faint)', margin: 0, lineHeight: 1.5 }}>
-                El código VAG de 5 dígitos es propio del fabricante, distinto del
-                P-code genérico. La interpretación de cada código no está
-                cargada todavía; se muestra el número tal cual.
+                Los códigos VAG de 5 dígitos son propios del fabricante. La tabla
+                cubre los más comunes de ME7.5; uno que no esté se muestra por
+                su número. El bit 0x80 del estado marca las esporádicas.
               </p>
             </div>
           </Panel>

@@ -37,7 +37,7 @@ import type { RoutineContext, RunMode, RunResult, StepOutcome } from '@/core/ser
 
 export type Screen =
   | 'conexion' | 'resumen' | 'computadora' | 'codigos' | 'datos' | 'emisiones'
-  | 'funciones' | 'memoria' | 'vag' | 'informe' | 'historial' | 'terminal';
+  | 'funciones' | 'memoria' | 'vag' | 'mapas' | 'informe' | 'historial' | 'terminal';
 
 /** Un paso de la conexión, para mostrar qué está haciendo la app. */
 export interface PasoBitacora {

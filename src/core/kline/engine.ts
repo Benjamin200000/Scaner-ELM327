@@ -1,5 +1,6 @@
 import { armarBloque, type Bloque, esAck, leerBloque, Titulo } from './block';
 import { decodificarMedicion, type Medicion } from './formulas';
+import { buscarFallaVag } from '@/knowledge/vag/faults';
 
 /**
  * Motor de sesión KW1281.
@@ -66,6 +67,9 @@ export interface GrupoMedicion {
 export interface FallaKline {
   /** Código VAG de 5 dígitos (p. ej. 00561). */
   codigo: string;
+  /** Descripción VAG, si está en la tabla. */
+  descripcion: string | null;
+  sistema: string | null;
   /** Byte de elaboración/estado. */
   estado: number;
   /** true si está presente ahora; false si es esporádica. */
@@ -126,8 +130,12 @@ export class Kw1281Engine {
         const estado = b.datos[i + 2]!;
         const num = alto * 256 + bajo;
         if (num === 0xffff || num === 0) continue; // relleno de fin de lista
+        const codigo = String(num).padStart(5, '0');
+        const vag = buscarFallaVag(codigo);
         fallas.push({
-          codigo: String(num).padStart(5, '0'),
+          codigo,
+          descripcion: vag?.descripcion ?? null,
+          sistema: vag?.sistema ?? null,
           estado,
           // El bit 0x80 del estado marca las esporádicas (no presentes ahora).
           presente: (estado & 0x80) === 0,

@@ -260,8 +260,12 @@ referencia [gmenounos/kw1281test](https://github.com/gmenounos/kw1281test):
 - **Identificación**: número de repuesto, componente y versión.
 - **Grupos de medición** en vivo, decodificados con la tabla completa de 70
   fórmulas de VAG (régimen, temperaturas, presiones, lambda, etc.).
-- **Fallas** con el código VAG de 5 dígitos, separando presentes de
-  esporádicas.
+- **Fallas** con el código VAG de 5 dígitos y su descripción (tabla de ~38
+  códigos comunes de ME7), separando presentes de esporádicas.
+- **Grupos de medición con nombre de campo**: el protocolo da el valor pero no
+  qué es cada campo; una tabla de ME7.5 los nombra (régimen, presión, lambda…).
+  Códigos y nombres siguen la nomenclatura de la comunidad (Ross-Tech), no
+  verificados campo por campo contra una ECU.
 
 Qué está verificado y qué no:
 
@@ -279,6 +283,31 @@ Qué está verificado y qué no:
 Arquitectura: la temporización crítica (byte a byte) vive en el agente, que no
 puede cruzar la red; la lógica de bloques y las fórmulas viven en la app, sobre
 una capa de enlace abstracta, y por eso son verificables sin hardware.
+
+### Visor de mapas (remap)
+
+Para entender un remap: toma un volcado (de la lectura por UDS o un `.bin`
+cargado) y una definición, y muestra las tablas de la ECU —inyección, turbo,
+encendido— como grillas con mapa de calor. Comparando dos volcados, resalta
+qué celdas cambió un remap. Pantalla **Mapas (remap)**.
+
+- Importa definiciones **TunerPro XDF** de la comunidad (subconjunto:
+  dirección, dimensiones, ejes y fórmula de conversión), además de una
+  definición nativa de demostración.
+- Interpreta big/little endian y valores con signo; avisa si una tabla cae
+  fuera del volcado en vez de mostrar basura.
+- La fórmula de conversión se evalúa de forma acotada (solo números, X y las
+  cuatro operaciones): una definición de terceros no puede ejecutar código.
+
+**Es solo lectura.** No edita ni escribe flash: entender y comparar un remap,
+no aplicarlo. La escritura queda fuera por la misma razón de siempre.
+
+Lo que verifiqué: la lectura de tablas, el endianness, el signo, la
+comparación y el importador XDF, con tests sobre volcados sintéticos. Lo que
+NO: que una definición real ubique bien los mapas de TU ECU (eso depende de que
+el XDF corresponda a tu versión de software), y los checksums de ME7, que son
+multi-región y según la comunidad (ME7Sum/ME7Check) son delicados y en ME7.5
+experimentales.
 
 ### Leer el mapa de la ECU
 
