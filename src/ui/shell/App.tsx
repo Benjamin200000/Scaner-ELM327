@@ -4,6 +4,8 @@ import { Dashboard } from '../screens/Dashboard';
 import { Dtcs } from '../screens/Dtcs';
 import { LiveData } from '../screens/LiveData';
 import { Features } from '../screens/Features';
+import { Informe } from '../screens/Informe';
+import { Historial } from '../screens/Historial';
 import { Terminal } from '../screens/Terminal';
 import { LinkDot } from '../parts/Status';
 
@@ -32,6 +34,8 @@ const NAV: NavItem[] = [
   { id: 'codigos', label: 'Códigos de falla', short: 'Códigos', live: true },
   { id: 'datos', label: 'Datos en vivo', short: 'Datos', live: true },
   { id: 'funciones', label: 'Funciones', short: 'Func.', live: true },
+  { id: 'informe', label: 'Informe', short: 'Informe', live: false },
+  { id: 'historial', label: 'Historial', short: 'Hist.', live: false },
   { id: 'terminal', label: 'Terminal', short: 'Term.', live: false },
 ];
 
@@ -179,6 +183,8 @@ export function App() {
         {effective === 'codigos' && <Dtcs />}
         {effective === 'datos' && <LiveData />}
         {effective === 'funciones' && <Features />}
+        {effective === 'informe' && <Informe />}
+        {effective === 'historial' && <Historial />}
         {effective === 'terminal' && <Terminal />}
       </main>
     </div>

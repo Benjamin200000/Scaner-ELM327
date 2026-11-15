@@ -4,14 +4,19 @@
   "private": true,
   "type": "module",
   "description": "Agente local: expone interfaces de diagnóstico al navegador por WebSocket",
-  "bin": { "scaner-agent": "./scaner-agent.mjs" },
+  "bin": {
+    "scaner-agent": "./scaner-agent.mjs"
+  },
   "scripts": {
     "start": "node scaner-agent.mjs",
     "simular": "node scaner-agent.mjs --simular"
   },
   "dependencies": {
-    "ws": "8.18.0",
-    "serialport": "12.0.0"
+    "koffi": "^2.9.0",
+    "serialport": "12.0.0",
+    "ws": "8.18.0"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }

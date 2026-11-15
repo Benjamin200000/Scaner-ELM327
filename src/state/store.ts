@@ -14,7 +14,7 @@ import { type Finding, runRules, type SkippedRule } from '@/core/engine/rules';
 import { type EvaluatedParam, evaluateParam } from '@/core/engine/evaluate';
 import { relevantSystems, type SystemDef } from '@/core/engine/systems';
 import type { VehicleContext } from '@/knowledge';
-import { History } from './history';
+import { History, type HistoryEntry } from './history';
 import { ServiceRunner, gate, type GateResult } from '@/core/service/runner';
 import { routineById } from '@/core/service/routines';
 import type { RoutineContext, RunMode, RunResult, StepOutcome } from '@/core/service/types';
@@ -27,7 +27,9 @@ import type { RoutineContext, RunMode, RunResult, StepOutcome } from '@/core/ser
  * mostrar) y delega todo lo que sea protocolo.
  */
 
-export type Screen = 'conexion' | 'resumen' | 'codigos' | 'datos' | 'funciones' | 'terminal' | 'historial';
+export type Screen =
+  | 'conexion' | 'resumen' | 'codigos' | 'datos'
+  | 'funciones' | 'informe' | 'historial' | 'terminal';
 
 export type DetailMode = 'simple' | 'tecnico';
 
@@ -77,6 +79,12 @@ interface AppState {
   agentBusy: boolean;
   agentVersion: string | null;
 
+  taller: { nombre: string; tecnico: string; orden: string; contacto: string };
+  historial: HistoryEntry[];
+  historialCargando: boolean;
+  /** Sesión del historial que se está mirando, o null para la actual. */
+  historialAbierto: HistoryEntry | null;
+
   /** Rutina de servicio en curso o terminada. */
   routineRun: RunResult | null;
   routineOutcomes: StepOutcome[];
@@ -96,6 +104,11 @@ interface AppState {
   setAgentToken(token: string): void;
   setAgentInterfaceId(id: string): void;
   probeAgent(): Promise<void>;
+  setTaller(t: Partial<AppState['taller']>): void;
+  cargarHistorial(): Promise<void>;
+  abrirDelHistorial(entry: HistoryEntry | null): void;
+  borrarDelHistorial(id: number): Promise<void>;
+  guardarSesionActual(): Promise<void>;
   runRoutine(routineId: string, mode: RunMode): Promise<void>;
   cancelRoutine(): void;
   clearRoutineRun(): void;
@@ -151,6 +164,32 @@ function makeTransport(
   }
 }
 
+/** Arma la entrada de historial a partir del estado actual. */
+function instantanea(
+  info: SessionInfo,
+  values: Map<string, number | null>,
+  dtcs: Dtc[],
+  manual: VehicleManual,
+): HistoryEntry {
+  return {
+    at: Date.now(),
+    vehicle: {
+      make: manual.make ?? null,
+      model: manual.model ?? null,
+      year: manual.year ?? null,
+      vin: info.identity.vin,
+      odometerKm: manual.odometerKm ?? null,
+    },
+    ecu: {
+      name: info.identity.ecuName,
+      calibrationId: info.identity.calibrationId,
+      protocol: info.protocol?.name ?? null,
+    },
+    dtcs: dtcs.map((d) => ({ code: d.code, kind: d.kind })),
+    values: Object.fromEntries(values),
+  };
+}
+
 /** localStorage puede fallar o venir vacío; nada de esto es crítico. */
 function leer(clave: string): string | null {
   try {
@@ -203,6 +242,16 @@ export const useApp = create<AppState>((set, get) => ({
   agentBusy: false,
   agentVersion: null,
 
+  taller: {
+    nombre: leer('tallerNombre') ?? '',
+    tecnico: leer('tallerTecnico') ?? '',
+    orden: '',
+    contacto: leer('tallerContacto') ?? '',
+  },
+  historial: [],
+  historialCargando: false,
+  historialAbierto: null,
+
   setScreen: (screen) => set({ screen }),
   setMode: (mode) => set({ mode }),
   setManual: (m) => set((s) => ({ manual: { ...s.manual, ...m } })),
@@ -214,6 +263,53 @@ export const useApp = create<AppState>((set, get) => ({
   setAgentUrl: (agentUrl) => { guardar('agentUrl', agentUrl); set({ agentUrl }); },
   setAgentToken: (agentToken) => { guardar('agentToken', agentToken); set({ agentToken }); },
   setAgentInterfaceId: (agentInterfaceId) => set({ agentInterfaceId }),
+  abrirDelHistorial: (historialAbierto) => set({ historialAbierto }),
+  setTaller: (t) => set((st) => {
+    const taller = { ...st.taller, ...t };
+    // El número de orden cambia en cada trabajo: no se persiste.
+    guardar('tallerNombre', taller.nombre);
+    guardar('tallerTecnico', taller.tecnico);
+    guardar('tallerContacto', taller.contacto);
+    return { taller };
+  }),
+
+  async cargarHistorial() {
+    set({ historialCargando: true });
+    try {
+      set({ historial: await History.list(100) });
+    } catch (err) {
+      set({ fault: toFault(err) });
+    } finally {
+      set({ historialCargando: false });
+    }
+  },
+
+  async borrarDelHistorial(id) {
+    try {
+      await History.remove(id);
+      await get().cargarHistorial();
+      if (get().historialAbierto?.id === id) set({ historialAbierto: null });
+    } catch (err) {
+      set({ fault: toFault(err) });
+    }
+  },
+
+  /**
+   * Guarda la sesión actual sin desconectar.
+   *
+   * Hace falta porque el informe se genera durante el trabajo, no después:
+   * el mecánico quiere el papel en la mano con el auto todavía conectado.
+   */
+  async guardarSesionActual() {
+    const { info, values, dtcs, manual } = get();
+    if (!info) return;
+    try {
+      await History.save(instantanea(info, values, dtcs, manual));
+      await get().cargarHistorial();
+    } catch (err) {
+      set({ fault: toFault(err) });
+    }
+  },
 
   /**
    * Consulta al agente qué interfaces tiene, sin abrir ninguna.
@@ -399,23 +495,8 @@ export const useApp = create<AppState>((set, get) => ({
     const { session, info, values, dtcs, manual } = get();
     if (session && info) {
       // Guardar la sesión antes de perderla.
-      await History.save({
-        at: Date.now(),
-        vehicle: {
-          make: manual.make ?? null,
-          model: manual.model ?? null,
-          year: manual.year ?? null,
-          vin: info.identity.vin,
-          odometerKm: manual.odometerKm ?? null,
-        },
-        ecu: {
-          name: info.identity.ecuName,
-          calibrationId: info.identity.calibrationId,
-          protocol: info.protocol?.name ?? null,
-        },
-        dtcs: dtcs.map((d) => ({ code: d.code, kind: d.kind })),
-        values: Object.fromEntries(values),
-      }).catch(() => { /* el historial no debe bloquear la desconexión */ });
+      await History.save(instantanea(info, values, dtcs, manual))
+        .catch(() => { /* el historial no debe bloquear la desconexión */ });
       await session.disconnect().catch(() => { /* el enlace ya pudo caer */ });
     }
     set({

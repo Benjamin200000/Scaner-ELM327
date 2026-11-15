@@ -38,6 +38,8 @@ Agente del escáner ELM327  v${VERSION}
                  Hace falta para usar la app desde una tablet o un teléfono.
   --simular      Ofrecer un ELM327 simulado, para verificar el enlace sin
                  hardware antes de pelearse con el adaptador.
+  --j2534 <ruta> Usar esta biblioteca J2534. En Windows las instaladas se
+                 descubren solas desde el registro.
   --token        Mostrar el token y salir.
   --ayuda        Esta ayuda.
 `);
@@ -54,6 +56,7 @@ if (flag('--token')) {
 const PUERTO = Number(valor('--puerto', '8777'));
 const LAN = flag('--lan');
 const SIMULAR = flag('--simular');
+const J2534 = valor('--j2534', null);
 const HOST = LAN ? '0.0.0.0' : '127.0.0.1';
 
 const wss = new WebSocketServer({ host: HOST, port: PUERTO, maxPayload: 64 * 1024 });
@@ -64,6 +67,7 @@ wss.on('listening', () => {
   console.log(`Token          ${TOKEN}`);
   console.log(`               (guardado en ${rutaToken})`);
   if (SIMULAR) console.log('Simulador      activo');
+  if (J2534) console.log(`J2534          ${J2534}`);
   if (LAN) {
     console.log(
       '\nAVISO: con --lan el agente acepta conexiones de toda la red local.\n' +
@@ -112,7 +116,7 @@ wss.on('connection', (ws, req) => {
       return enviar({
         t: 'hello-ok',
         agent: { version: VERSION, platform: process.platform, node: process.versions.node },
-        features: { simulador: SIMULAR, j2534: false },
+        features: { simulador: SIMULAR, j2534: J2534 !== null || process.platform === 'win32' },
       });
     }
 
@@ -123,7 +127,7 @@ wss.on('connection', (ws, req) => {
         return enviar({ t: 'pong' });
 
       case 'list':
-        return enviar({ t: 'interfaces', items: await enumerar({ simular: SIMULAR }) });
+        return enviar({ t: 'interfaces', items: await enumerar({ simular: SIMULAR, j2534: J2534 }) });
 
       case 'open': {
         if (interfaz !== null) return error(CODIGOS.yaAbierta, 'Ya hay una interfaz abierta');

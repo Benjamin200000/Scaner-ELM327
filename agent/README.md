@@ -8,7 +8,7 @@ Alcanza las interfaces que un navegador no puede tocar:
 | ELM327 Bluetooth Classic (SPP) | **No** | Sí |
 | ELM327 USB | Solo Chrome/Edge escritorio | Sí, cualquier navegador |
 | Cable K-Line / KKL 409.1 | **No** | Sí |
-| J2534 | **No** | Previsto, todavía no |
+| J2534 | **No** | Sí |
 
 Y resuelve iOS de costado: el agente corre en la notebook con el adaptador
 enchufado, y el iPhone o el iPad abren la app apuntando a esa dirección.
@@ -48,6 +48,37 @@ Bluetooth → pestaña **COM**. Ahí figura el COM saliente del adaptador. El
 agente lo va a listar marcado como `bluetooth-spp`.
 
 Si pide PIN al emparejar, en estos adaptadores suele ser `1234` o `0000`.
+
+## J2534
+
+En Windows el agente descubre solo las bibliotecas instaladas: cada
+instalador de fabricante se registra bajo `PassThruSupport.04.04` en el
+registro. Aparecen en la lista de interfaces sin configurar nada.
+
+Para apuntar a una en concreto:
+
+```bash
+node scaner-agent.mjs --j2534 "C:\Program Files (x86)\Autel\...\MaxiFlash.dll"
+```
+
+El agente traduce entre la API de mensajes de J2534 y el flujo de texto que
+espera el driver del ELM327. Para la app es un adaptador más: el motor de
+reglas, los códigos y el informe funcionan igual.
+
+### Si la DLL es de 32 bits
+
+Node de 64 bits no puede cargar una DLL de 32. El agente lo detecta y lo
+dice con todas las letras en vez de fallar con un mensaje del sistema.
+Soluciones: usar la variante de 64 bits si el fabricante la provee, o
+instalar un Node de 32 bits para correr el agente.
+
+### Qué está verificado y qué no
+
+El enlace FFI (estructuras, punteros, traducción de errores) y el puente a
+ELM327 están probados contra una biblioteca J2534 falsa compilada para los
+tests, con una ECU mínima detrás. Lo que **no** está probado es contra un
+equipo real: eso necesita el hardware. La primera vez que lo conectes,
+activá el modo debug en Terminal y exportá la sesión.
 
 ## Baud rate
 

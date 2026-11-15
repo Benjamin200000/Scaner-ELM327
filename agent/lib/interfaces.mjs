@@ -1,5 +1,7 @@
 import { CODIGOS } from './protocol.mjs';
 import { ElmStub } from './elm-stub.mjs';
+import { buscarInstaladas } from './j2534.mjs';
+import { J2534ComoElm } from './j2534-elm.mjs';
 
 /**
  * Enumeración y apertura de interfaces de diagnóstico.
@@ -24,8 +26,28 @@ const PUENTES_USB = {
   '10c4:ea60': 'Silicon Labs CP2102', '067b:2303': 'Prolific PL2303',
 };
 
-export async function enumerar({ simular }) {
+export async function enumerar({ simular, j2534 }) {
   const items = [];
+
+  // J2534 indicado a mano con --j2534, o descubierto en el registro de
+  // Windows bajo PassThruSupport.04.04, que es donde se registra cada
+  // instalador de fabricante.
+  if (j2534) {
+    items.push({
+      id: `j2534:${j2534}`,
+      kind: 'j2534',
+      label: 'Equipo J2534 (indicado a mano)',
+      detail: j2534,
+    });
+  }
+  for (const encontrada of buscarInstaladas()) {
+    items.push({
+      id: `j2534:${encontrada.dll}`,
+      kind: 'j2534',
+      label: `${encontrada.nombre} (J2534)`,
+      detail: `${encontrada.proveedor} · ${encontrada.dll}`,
+    });
+  }
 
   if (simular) {
     items.push({
@@ -76,6 +98,25 @@ export async function enumerar({ simular }) {
  * `{ info, write(bytes), close(), onData(cb), onClose(cb) }`.
  */
 export async function abrir(id, options, { simular }) {
+  if (id.startsWith('j2534:')) {
+    const ruta = id.slice('j2534:'.length);
+    let puente;
+    try {
+      puente = new J2534ComoElm(ruta);
+    } catch (err) {
+      throw fallo(CODIGOS.falloAlAbrir,
+        `No se pudo abrir el equipo J2534: ${err?.message ?? err}`,
+        String(err?.detalle ?? ''));
+    }
+    return {
+      info: puente.info,
+      write: (bytes) => puente.write(bytes),
+      close: () => puente.close(),
+      onData: (cb) => puente.on('data', cb),
+      onClose: () => { /* el puente no se cae solo */ },
+    };
+  }
+
   if (id.startsWith('sim:')) {
     if (!simular) {
       throw fallo(CODIGOS.interfazDesconocida,
