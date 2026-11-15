@@ -4,6 +4,7 @@ import { networkInterfaces } from 'node:os';
 import { analizar, CODIGOS } from './lib/protocol.mjs';
 import { obtenerToken, rutaToken, tokenValido } from './lib/auth.mjs';
 import { abrir, enumerar } from './lib/interfaces.mjs';
+import { EnlaceKLine } from './lib/kline.mjs';
 
 /**
  * Agente local del escáner.
@@ -92,6 +93,7 @@ wss.on('connection', (ws, req) => {
   let interfaz = null;
   let autenticado = false;
   let abriendo = false;
+  let kline = null;
 
   const enviar = (obj) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
@@ -164,6 +166,9 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
+      case 'kline':
+        return manejarKline(msg);
+
       case 'close': {
         if (interfaz === null) return error(CODIGOS.noAbierta, 'No hay una interfaz abierta');
         const i = interfaz;
@@ -175,6 +180,40 @@ wss.on('connection', (ws, req) => {
     }
   });
 
+  async function manejarKline(msg) {
+    try {
+      if (msg.op === 'open') {
+        if (!msg.id.startsWith('serial:')) {
+          return error(CODIGOS.interfazDesconocida, 'K-Line necesita un puerto serie (cable KKL)');
+        }
+        const { SerialPort } = await import('serialport');
+        kline = new EnlaceKLine(SerialPort);
+        await kline.abrir(msg.id.slice('serial:'.length), msg.baud);
+        return enviar({ t: 'kline', op: 'open', ok: true });
+      }
+      if (kline === null) return error(CODIGOS.noAbierta, 'El enlace K-Line no está abierto');
+      if (msg.op === 'init') {
+        const r = await kline.init(msg.address);
+        return enviar({ t: 'kline', op: 'init', version: r.version, keywords: r.keywords });
+      }
+      if (msg.op === 'send') {
+        await kline.enviarBloque(msg.bytes);
+        return enviar({ t: 'kline', op: 'send', ok: true });
+      }
+      if (msg.op === 'recv') {
+        const bytes = await kline.recibirBloque(msg.timeout);
+        return enviar({ t: 'kline', op: 'recv', bytes });
+      }
+      if (msg.op === 'close') {
+        await kline.cerrar();
+        kline = null;
+        return enviar({ t: 'kline', op: 'close', ok: true });
+      }
+    } catch (err) {
+      return error(CODIGOS.enlaceCaido, `K-Line: ${err?.message ?? err}`);
+    }
+  }
+
   ws.on('close', async () => {
     console.log(`[${quien}] desconectado`);
     // Si el navegador se va, el puerto tiene que quedar libre: si no, el
@@ -184,6 +223,7 @@ wss.on('connection', (ws, req) => {
       interfaz = null;
       await i.close().catch(() => {});
     }
+    if (kline !== null) { await kline.cerrar().catch(() => {}); kline = null; }
   });
 });
 

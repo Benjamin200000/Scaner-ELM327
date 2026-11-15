@@ -54,6 +54,26 @@ export function analizar(raw) {
     case 'close':
     case 'ping':
       return { ok: true, msg: { t: msg.t } };
+    case 'kline': {
+      const op = msg.op;
+      if (!esTexto(op, 16)) return malo('Falta la operación de K-Line');
+      const out = { t: 'kline', op };
+      if (op === 'open') {
+        if (!esTexto(msg.id, 256)) return malo('Falta la interfaz');
+        out.id = msg.id;
+        out.baud = Number(msg.baud) || 10400;
+      } else if (op === 'init') {
+        const dir = Number(msg.address);
+        if (!Number.isInteger(dir) || dir < 0 || dir > 0xff) return malo('Dirección inválida');
+        out.address = dir;
+      } else if (op === 'send') {
+        if (!Array.isArray(msg.bytes) || msg.bytes.length > 300) return malo('Bytes inválidos');
+        out.bytes = msg.bytes.map((b) => b & 0xff);
+      } else if (op === 'recv') {
+        out.timeout = Math.min(Number(msg.timeout) || 2000, 10000);
+      }
+      return { ok: true, msg: out };
+    }
     case 'open': {
       if (!esTexto(msg.id, 256)) return malo('Falta el identificador de la interfaz');
       const baudRate = Number(msg.options?.baudRate ?? 38400);

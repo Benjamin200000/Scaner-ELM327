@@ -247,6 +247,39 @@ contrastados contra una fuente primaria y van marcados. El aprobado o
 reprobado no depende de ellos: es el valor contra los límites que informa la
 propia ECU.
 
+### VAG por cable KKL (KW1281)
+
+Un cable KKL es un conversor USB↔K-Line sin intérprete: a diferencia del
+ELM327, todo el protocolo lo hace el host. Por eso KW1281 —el protocolo de
+los VAG (VW, Audi, SEAT, Škoda) anteriores a ~2005— es imposible con ELM327
+pero sí funciona con KKL.
+
+Implementado (pantalla **VAG (K-Line)**), siguiendo la implementación de
+referencia [gmenounos/kw1281test](https://github.com/gmenounos/kw1281test):
+
+- **Identificación**: número de repuesto, componente y versión.
+- **Grupos de medición** en vivo, decodificados con la tabla completa de 70
+  fórmulas de VAG (régimen, temperaturas, presiones, lambda, etc.).
+- **Fallas** con el código VAG de 5 dígitos, separando presentes de
+  esporádicas.
+
+Qué está verificado y qué no:
+
+- La **lógica del protocolo** (contador de bloques, turno estricto, handshake,
+  armado de bloques, las 70 fórmulas) está probada contra un ECU KW1281
+  simulado en memoria. La fuente "Simulador (Golf ME7.5)" la ejercita sin
+  cable.
+- La **capa física** del agente (init de 5 baudios bit a bit y el handshake
+  byte a byte sobre el puerto serie) está portada de la referencia pero **no
+  verificada contra un cable y un auto reales** desde este entorno. La
+  temporización puede necesitar ajuste según el cable (FTDI/CH340).
+- La **interpretación de los códigos VAG de 5 dígitos** no está cargada: se
+  muestra el número.
+
+Arquitectura: la temporización crítica (byte a byte) vive en el agente, que no
+puede cruzar la red; la lógica de bloques y las fórmulas viven en la app, sobre
+una capa de enlace abstracta, y por eso son verificables sin hardware.
+
 ### Leer el mapa de la ECU
 
 Con un **ELM327** en general no se puede (límite de largo de mensaje). Con un

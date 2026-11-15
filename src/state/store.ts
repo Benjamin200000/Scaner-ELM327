@@ -20,6 +20,9 @@ import { leerIdentificacionUds, type DidValue } from '@/core/uds/ident';
 import { probarAdaptador, type InformeAdaptador } from '@/core/elm327/adapterTest';
 import { leerRegion, type ResultadoLectura, volcadoHex } from '@/core/uds/memory';
 import { moduloPorId, type RegionMemoria } from '@/core/uds/modules';
+import { Kw1281Engine, type FallaKline, type GrupoMedicion, type Identificacion } from '@/core/kline/engine';
+import { EcuKlineSimulada, perfilGolfMe7 } from '@/core/kline/sim';
+import { KLineLinkAgente } from '@/core/kline/agentLink';
 import { ServiceRunner, gate, type GateResult } from '@/core/service/runner';
 import { routineById } from '@/core/service/routines';
 import type { RoutineContext, RunMode, RunResult, StepOutcome } from '@/core/service/types';
@@ -34,7 +37,7 @@ import type { RoutineContext, RunMode, RunResult, StepOutcome } from '@/core/ser
 
 export type Screen =
   | 'conexion' | 'resumen' | 'computadora' | 'codigos' | 'datos' | 'emisiones'
-  | 'funciones' | 'memoria' | 'informe' | 'historial' | 'terminal';
+  | 'funciones' | 'memoria' | 'vag' | 'informe' | 'historial' | 'terminal';
 
 /** Un paso de la conexión, para mostrar qué está haciendo la app. */
 export interface PasoBitacora {
@@ -102,6 +105,16 @@ interface AppState {
   /** Lectura de memoria: resultado, avance y volcado del último leído. */
   lectura: { resultado: ResultadoLectura; volcado: string[] } | null;
   lecturaAvance: { leido: number; total: number } | null;
+
+  /** Sesión VAG K-Line (KW1281). */
+  kline: {
+    estado: 'desconectado' | 'conectando' | 'conectado' | 'error';
+    ident: Identificacion | null;
+    grupoNum: number;
+    grupo: GrupoMedicion | null;
+    fallas: FallaKline[] | null;
+    error: string | null;
+  };
   /** Operación larga en curso: 'modo06', 'uds:7E8', 'adaptador'. */
   ocupado: string | null;
   /** Datos congelados: la foto de los sensores al guardarse el código. */
@@ -138,6 +151,10 @@ interface AppState {
   ejecutarPruebaAdaptador(): Promise<void>;
   leerMemoria(moduloId: string, region: RegionMemoria): Promise<void>;
   cancelarLectura(): void;
+  klineConectar(fuente: 'simulador' | 'agente', direccion: number): Promise<void>;
+  klineVerGrupo(n: number): void;
+  klineLeerFallas(): Promise<void>;
+  klineDesconectar(): Promise<void>;
   cargarHistorial(): Promise<void>;
   abrirDelHistorial(entry: HistoryEntry | null): void;
   borrarDelHistorial(id: number): Promise<void>;
@@ -245,6 +262,47 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let cancelRequested = false;
 let vueltaEnCurso: Promise<void> | null = null;
 let cancelarMemoria = false;
+let klineEngine: Kw1281Engine | null = null;
+let klineCorriendo = false;
+/** Pedido puntual que el ciclo KW1281 atiende entre lecturas de grupo. */
+let klinePedido: 'fallas' | null = null;
+
+/**
+ * Ciclo de la sesión KW1281.
+ *
+ * KW1281 exige mantener la sesión viva sin pausas: si el probador deja de
+ * hablar, la ECU corta. Por eso hay un único ciclo que serializa todo —leer
+ * el grupo elegido, atender un pedido de fallas, o mandar un ACK de
+ * mantenimiento— porque el protocolo es de turno estricto y dos operaciones
+ * a la vez lo romperían.
+ */
+function arrancarCicloKline(
+  set: (p: Partial<AppState>) => void,
+  get: () => AppState,
+): void {
+  klineCorriendo = true;
+  const paso = async (): Promise<void> => {
+    const e = klineEngine;
+    if (!e || !klineCorriendo) return;
+    try {
+      if (klinePedido === 'fallas') {
+        klinePedido = null;
+        const fallas = await e.leerFallas();
+        set({ kline: { ...get().kline, fallas } });
+      } else {
+        const n = get().kline.grupoNum;
+        const grupo = await e.leerGrupo(n);
+        set({ kline: { ...get().kline, grupo } });
+      }
+    } catch (err) {
+      klineCorriendo = false;
+      set({ kline: { ...get().kline, estado: 'error', error: err instanceof Error ? err.message : String(err) } });
+      return;
+    }
+    if (klineCorriendo) setTimeout(() => void paso(), 60);
+  };
+  void paso();
+}
 
 export const useApp = create<AppState>((set, get) => ({
   screen: 'conexion',
@@ -290,6 +348,7 @@ export const useApp = create<AppState>((set, get) => ({
   adaptador: null,
   lectura: null,
   lecturaAvance: null,
+  kline: { estado: 'desconectado', ident: null, grupoNum: 1, grupo: null, fallas: null, error: null },
   ocupado: null,
   freeze: null,
   freezeCargando: false,
@@ -346,6 +405,46 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   cancelarLectura: () => { cancelarMemoria = true; },
+
+  /**
+   * Conecta con una unidad VAG por KW1281.
+   *
+   * 'simulador' usa un ECU en memoria (Golf ME7.5), para probar sin cable.
+   * 'agente' usa el cable KKL a través del agente local.
+   */
+  async klineConectar(fuente, direccion) {
+    const st = get();
+    const link = fuente === 'simulador'
+      ? new EcuKlineSimulada({ ...perfilGolfMe7, direccion })
+      : new KLineLinkAgente({
+          url: st.agentUrl, token: st.agentToken,
+          interfaceId: st.agentInterfaceId,
+        });
+    klineEngine = new Kw1281Engine(link);
+    set({ kline: { ...get().kline, estado: 'conectando', error: null, ident: null, fallas: null, grupo: null } });
+    try {
+      const ident = await klineEngine.conectar(direccion);
+      set({ kline: { ...get().kline, estado: 'conectado', ident } });
+      arrancarCicloKline(set, get);
+    } catch (err) {
+      klineEngine = null;
+      set({ kline: { ...get().kline, estado: 'error', error: err instanceof Error ? err.message : String(err) } });
+    }
+  },
+
+  klineVerGrupo: (n) => set({ kline: { ...get().kline, grupoNum: n } }),
+
+  async klineLeerFallas() {
+    klinePedido = 'fallas';
+  },
+
+  async klineDesconectar() {
+    klineCorriendo = false;
+    const e = klineEngine;
+    klineEngine = null;
+    if (e) await e.desconectar().catch(() => {});
+    set({ kline: { estado: 'desconectado', ident: null, grupoNum: get().kline.grupoNum, grupo: null, fallas: null, error: null } });
+  },
 
   /**
    * Lee una región de memoria de la ECU.
