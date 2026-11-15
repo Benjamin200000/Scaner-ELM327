@@ -19,6 +19,8 @@ export interface SimOptions {
   ecuSilent?: boolean;
   /** Versión que reporta ATZ / ATI. */
   version?: string;
+  /** Se comporta como un clon barato: rechaza los comandos avanzados. */
+  clon?: boolean;
 }
 
 interface ElmFlags {
@@ -27,6 +29,8 @@ interface ElmFlags {
   spaces: boolean;
   headers: boolean;
   protocol: string;
+  /** Cabecera fijada con ATSH; vacía = direccionamiento funcional. */
+  sh: string;
 }
 
 const CR = '\r';
@@ -37,6 +41,7 @@ export class Elm327Simulator {
   private readonly latencyMs: number;
   private readonly version: string;
   private ecuSilent: boolean;
+  private readonly clon: boolean;
   private state: SimEngineState;
   private flags: ElmFlags;
   private clearedAt: number | null = null;
@@ -56,12 +61,13 @@ export class Elm327Simulator {
     this.latencyMs = opts.latencyMs ?? 40;
     this.version = opts.version ?? 'ELM327 v1.5';
     this.ecuSilent = opts.ecuSilent ?? false;
+    this.clon = opts.clon ?? false;
     this.state = this.profile.initial();
     this.flags = this.defaultFlags();
   }
 
   private defaultFlags(): ElmFlags {
-    return { echo: true, linefeed: true, spaces: true, headers: false, protocol: '0' };
+    return { echo: true, linefeed: true, spaces: true, headers: false, protocol: '0', sh: '' };
   }
 
   get latency(): number {
@@ -162,7 +168,18 @@ export class Elm327Simulator {
       return ['OK'];
     }
     if (/^ST[0-9A-F]{1,2}$/.test(arg)) return ['OK'];
-    if (/^SH[0-9A-F]{3,6}$/.test(arg)) return ['OK'];
+    if (/^SH[0-9A-F]{3,8}$/.test(arg)) {
+      this.flags.sh = arg.slice(2);
+      return ['OK'];
+    }
+    // Comandos que un ELM327 genuino acepta y varios clones no.
+    if (this.clon && /^(AL|NL|FCS|CRA|CAF|@1)/.test(arg)) return ['?'];
+    if (/^(AL|NL|AR|CFC[01]|FCSM[012]|V[01]|R[01]|BI|PC|WS)$/.test(arg)) return ['OK'];
+    if (/^(FCSH|FCSD|CRA|TP|TA|SD|BRD|BRT|PP)[0-9A-F ]*$/.test(arg)) return ['OK'];
+    if (arg === '@1') return ['OBDII to RS232 Interpreter'];
+    if (arg === 'IGN') return ['ON'];
+    if (arg === 'KW') return ['1:8F 2:E9'];
+    if (arg === 'CS') return ['T:00 R:00'];
     if (/^(WM|SW|IIA|SR|CRA|CF|CM)/.test(arg)) return ['OK'];
     return ['?'];
   }
@@ -187,6 +204,8 @@ export class Elm327Simulator {
         return ['44'];
       case '07':
         return this.mode07();
+      case '06':
+        return this.mode06(pid);
       case '09':
         return this.mode09(pid);
       case '0A':
@@ -211,9 +230,9 @@ export class Elm327Simulator {
   private kwpService(sid: number, argHex: string): string[] {
     const args = bytesOf(argHex);
     const positive = (data: number[] = []): string[] =>
-      [this.frame([byte(sid + 0x40), ...data.map(byte)])];
+      this.frame([byte(sid + 0x40), ...data.map(byte)]);
     const negative = (nrc: number): string[] =>
-      [this.frame(['7F', byte(sid), byte(nrc)])];
+      this.frame(['7F', byte(sid), byte(nrc)]);
 
     const extended = this.kwp.session === 0x85 || this.kwp.session === 0x86;
 
@@ -286,6 +305,18 @@ export class Elm327Simulator {
         return positive([routine]);
       }
 
+      case 0x22: { // readDataByIdentifier (UDS)
+        const destino = this.direccionada();
+        const mapa = destino === 'segunda' ? this.profile.segunda?.uds : this.profile.uds;
+        if (destino === 'nadie' || !mapa) return ['NO DATA'];
+        const did = argHex.slice(0, 4).toUpperCase();
+        const texto = mapa[did];
+        const ecu = destino === 'segunda' ? 'segunda' : 'principal';
+        if (texto === undefined) return this.frame(['7F', '22', '31'], ecu);
+        const chars = Array.from(new TextEncoder().encode(texto), (b) => byte(b));
+        return this.frame(['62', did.slice(0, 2), did.slice(2, 4), ...chars], ecu);
+      }
+
       case 0x27: // securityAccess
         return negative(0x33);
 
@@ -323,7 +354,7 @@ export class Elm327Simulator {
       salida.push(pid, ...bytes);
     }
     if (salida.length === 0) return ['NO DATA'];
-    return [this.frame(['41', ...salida])];
+    return this.frame(['41', ...salida]);
   }
 
   private mode01(pid: string): string[] {
@@ -331,12 +362,22 @@ export class Elm327Simulator {
         pid === '60' || pid === '80' || pid === 'A0' || pid === 'C0') {
       const bitmap = this.supportBitmap(pid);
       if (!bitmap) return ['NO DATA'];
-      return [this.frame(['41', pid, ...bitmap])];
+      const lineas = this.frame(['41', pid, ...bitmap]);
+      // La segunda unidad también contesta el bloque inicial.
+      if (pid === '00' && this.profile.segunda && this.direccionada() === 'todas') {
+        const bits = new Uint8Array(4);
+        for (const pp of this.profile.segunda.supportedPids) {
+          const idx = parseInt(pp, 16) - 1;
+          if (idx >= 0 && idx < 32) bits[idx >> 3] = (bits[idx >> 3] ?? 0) | (0x80 >> (idx & 7));
+        }
+        lineas.push(...this.frame(['41', '00', ...Array.from(bits, (b) => byte(b))], 'segunda'));
+      }
+      return lineas;
     }
     if (!this.profile.supportedPids.includes(pid)) return ['NO DATA'];
     const bytes = this.pidValue(pid);
     if (!bytes) return ['NO DATA'];
-    return [this.frame(['41', pid, ...bytes])];
+    return this.frame(['41', pid, ...bytes]);
   }
 
   /** Bitmap de 4 bytes: bit más significativo = primer PID del rango. */
@@ -480,7 +521,7 @@ export class Elm327Simulator {
     // PID 02 del modo 02: el código que disparó la foto.
     if (pid === '02') {
       const codigo = almacenados[0]?.code ?? 'P0000';
-      return [this.frame(['42', '02', '00', ...encodeDtc(codigo)])];
+      return this.frame(['42', '02', '00', ...encodeDtc(codigo)]);
     }
 
     // La foto: régimen y carga más altos que el ralentí actual, porque la
@@ -497,19 +538,43 @@ export class Elm327Simulator {
     };
     const bytes = foto[pid];
     if (!bytes) return ['NO DATA'];
-    return [this.frame(['42', pid, '00', ...bytes])];
+    return this.frame(['42', pid, '00', ...bytes]);
   }
 
   private mode03(): string[] {
-    return this.dtcResponse('43', this.activeDtcs('stored').map((d) => d.code));
+    return this.dtcDeTodas('43', 'stored');
   }
 
   private mode07(): string[] {
-    return this.dtcResponse('47', this.activeDtcs('pending').map((d) => d.code));
+    return this.dtcDeTodas('47', 'pending');
   }
 
   private mode0A(): string[] {
-    return this.dtcResponse('4A', this.activeDtcs('permanent').map((d) => d.code));
+    return this.dtcDeTodas('4A', 'permanent');
+  }
+
+  /** Cada unidad del bus informa sus propios códigos, en líneas separadas. */
+  private dtcDeTodas(mode: string, kind: 'stored' | 'pending' | 'permanent'): string[] {
+    const principal = this.dtcResponse(mode, this.activeDtcs(kind).map((d) => d.code));
+    const seg = this.profile.segunda;
+    if (!seg) return principal;
+    const codigos = this.clearedAt !== null && kind !== 'permanent'
+      ? [] : seg.dtcs.filter((d) => d.kind === kind).map((d) => d.code);
+    const segunda = this.dtcResponse(mode, codigos, 'segunda');
+    const utiles = (l: string[]): string[] => l.filter((x) => x !== 'NO DATA');
+    const todo = [...utiles(principal), ...utiles(segunda)];
+    return todo.length > 0 ? todo : ['NO DATA'];
+  }
+
+  /** A quién va dirigida la solicitud según ATSH. */
+  private direccionada(): 'todas' | 'principal' | 'segunda' | 'nadie' {
+    const sh = this.flags.sh.toUpperCase();
+    if (sh === '' || sh === '7DF') return 'todas';
+    if (sh === '7E0') return 'principal';
+    if (sh === '7E1') return this.profile.segunda ? 'segunda' : 'nadie';
+    // En K-Line la cabecera lleva formato, destino y origen.
+    if (sh.length === 6) return 'principal';
+    return 'nadie';
   }
 
   /**
@@ -517,66 +582,162 @@ export class Elm327Simulator {
    * con 00 00 hasta completar tres DTC por trama. Esa diferencia es real y el
    * parser tiene que tolerar ambas.
    */
-  private dtcResponse(mode: string, codes: string[]): string[] {
+  private dtcResponse(mode: string, codes: string[],
+                      ecu: 'principal' | 'segunda' = 'principal'): string[] {
     const isCan = Number(this.profile.protocolNumber) >= 6;
     const payload = codes.flatMap(encodeDtc);
     if (isCan) {
-      if (codes.length === 0) return [this.frame([mode, '00'])];
-      return [this.frame([mode, byte(codes.length), ...payload])];
+      if (codes.length === 0) return this.frame([mode, '00'], ecu);
+      return this.frame([mode, byte(codes.length), ...payload], ecu);
     }
     if (codes.length === 0) return ['NO DATA'];
     const padded = [...payload];
     while (padded.length % 6 !== 0) padded.push('00');
     const lines: string[] = [];
     for (let i = 0; i < padded.length; i += 6) {
-      lines.push(this.frame([mode, ...padded.slice(i, i + 6)]));
-    }
-    return lines;
-  }
-
-  /** Modo 09: respuestas largas, que el ELM327 parte en líneas numeradas. */
-  private mode09(pid: string): string[] {
-    const text = pid === '02' ? this.profile.vin
-      : pid === '0A' ? this.profile.ecuName
-      : pid === '04' ? this.profile.calId
-      : null;
-    if (pid === '00') {
-      const bits = new Uint8Array(4);
-      for (const p of ['02', '04', '0A']) {
-        const idx = parseInt(p, 16) - 1;
-        if (idx >= 0 && idx < 32) bits[idx >> 3] = (bits[idx >> 3] ?? 0) | (0x80 >> (idx & 7));
-      }
-      return [this.frame(['49', '00',
-        ...Array.from(bits, (b) => byte(b))])];
-    }
-    if (text === null) return ['NO DATA'];
-    const chars = Array.from(new TextEncoder().encode(text), (b) => byte(b));
-    const payload = ['49', pid, '01', ...chars];
-    // El chip anuncia el largo total y numera las líneas de 7 bytes.
-    const lines: string[] = [byte(payload.length).padStart(3, '0')];
-    for (let i = 0, n = 0; i < payload.length; i += 7, n++) {
-      const slice = payload.slice(i, i + 7);
-      while (slice.length < 7) slice.push('00');
-      lines.push(`${n.toString(16).toUpperCase()}:${this.flags.spaces ? ' ' : ''}${
-        this.flags.spaces ? slice.join(' ') : slice.join('')}`);
+      lines.push(...this.frame([mode, ...padded.slice(i, i + 6)], ecu));
     }
     return lines;
   }
 
   /**
-   * Aplica ATH y ATS al armar la trama, como hace el chip.
-   *
-   * El checksum de KWP no se incluye a propósito: un ELM327 real lo valida
-   * y lo descarta, no lo entrega al host.
+   * Modo 09: identificación. VIN, calibraciones, CVN y nombre de ECU.
+   * En CAN va como un mensaje ISO-TP; en K-Line, en trozos con byte de orden.
    */
-  private frame(bytes: string[]): string {
+  private mode09(pid: string): string[] {
     const isCan = Number(this.profile.protocolNumber) >= 6;
-    const out = this.flags.headers
-      ? isCan
-        ? ['7E8', byte(bytes.length), ...bytes]
-        : ['48', '6B', '10', ...bytes]
-      : bytes;
-    return this.flags.spaces ? out.join(' ') : out.join('');
+    const ascii = (t: string, largo: number): string[] => {
+      const b = Array.from(new TextEncoder().encode(t.slice(0, largo)), (x) => byte(x));
+      while (b.length < largo) b.push('00');
+      return b;
+    };
+    const emitir = (datos: string[], ecu: 'principal' | 'segunda'): string[] =>
+      isCan ? this.frame(['49', pid, '01', ...datos], ecu)
+        : this.largaLegacy('49', pid, datos, ecu);
+
+    if (pid === '00') {
+      const bits = new Uint8Array(4);
+      for (const p of ['02', '04', '06', '0A']) {
+        const idx = parseInt(p, 16) - 1;
+        bits[idx >> 3] = (bits[idx >> 3] ?? 0) | (0x80 >> (idx & 7));
+      }
+      return this.frame(['49', '00', ...Array.from(bits, (b) => byte(b))]);
+    }
+
+    const seg = this.profile.segunda;
+    const lineas: string[] = [];
+    switch (pid) {
+      case '02':
+        if (this.profile.vin === null) return ['NO DATA'];
+        return emitir(ascii(this.profile.vin, 17), 'principal');
+      case '04':
+        if (this.profile.calId !== null) lineas.push(...emitir(ascii(this.profile.calId, 16), 'principal'));
+        if (seg) lineas.push(...emitir(ascii(seg.calId, 16), 'segunda'));
+        break;
+      case '06':
+        if (this.profile.cvn) lineas.push(...emitir(this.profile.cvn.map((b) => byte(b)), 'principal'));
+        break;
+      case '0A':
+        if (this.profile.ecuName !== null) lineas.push(...emitir(ascii(this.profile.ecuName, 20), 'principal'));
+        if (seg) lineas.push(...emitir(ascii(seg.ecuName, 20), 'segunda'));
+        break;
+    }
+    return lineas.length > 0 ? lineas : ['NO DATA'];
+  }
+
+  /**
+   * Modo 06: resultados de los autodiagnósticos, solo en CAN.
+   * Cada registro: MID, TID, unidad, valor, mínimo y máximo.
+   */
+  private mode06(mid: string): string[] {
+    const isCan = Number(this.profile.protocolNumber) >= 6;
+    const tests = this.profile.mode06 ?? [];
+    if (!isCan || tests.length === 0) return ['NO DATA'];
+    const n = parseInt(mid, 16);
+
+    if (n % 0x20 === 0) {
+      const bits = new Uint8Array(4);
+      let alguno = false;
+      for (const t of tests) {
+        const idx = t.mid - n - 1;
+        if (idx >= 0 && idx < 32) { bits[idx >> 3] = (bits[idx >> 3] ?? 0) | (0x80 >> (idx & 7)); alguno = true; }
+      }
+      if (tests.some((t) => t.mid > n + 0x20)) { bits[3] = (bits[3] ?? 0) | 0x01; alguno = true; }
+      if (!alguno) return ['NO DATA'];
+      return this.frame(['46', mid, ...Array.from(bits, (b) => byte(b))]);
+    }
+
+    const propios = tests.filter((t) => t.mid === n);
+    if (propios.length === 0) return ['NO DATA'];
+    const w = (v: number): string[] => [byte(v >> 8), byte(v & 0xff)];
+    const datos = propios.flatMap((t) => [
+      byte(t.mid), byte(t.tid), byte(t.uas), ...w(t.value), ...w(t.min), ...w(t.max),
+    ]);
+    return this.frame(['46', ...datos]);
+  }
+
+  /**
+   * Arma las líneas tal como las emite un ELM327 real.
+   *
+   * Con ATH1 el chip entrega tramas crudas del bus:
+   *  - CAN: identificador, byte PCI de ISO-TP y datos. Lo que no entra en
+   *    una trama sale partido en primera + consecutivas, sin reensamblar.
+   *  - K-Line: tres bytes de cabecera, datos y el checksum al final.
+   * Con ATH0 el chip oculta todo eso y, en CAN, numera las líneas largas.
+   */
+  private frame(bytes: string[], ecu: 'principal' | 'segunda' = 'principal'): string[] {
+    const isCan = Number(this.profile.protocolNumber) >= 6;
+    const unir = (partes: string[]): string =>
+      this.flags.spaces ? partes.join(' ') : partes.join('');
+
+    if (isCan) {
+      const id = ecu === 'principal' ? '7E8' : '7E9';
+      if (this.flags.headers) {
+        if (bytes.length <= 7) return [unir([id, byte(bytes.length), ...bytes])];
+        const lineas = [unir([
+          id, byte(0x10 | (bytes.length >> 8)), byte(bytes.length & 0xff),
+          ...bytes.slice(0, 6),
+        ])];
+        for (let i = 6, n = 1; i < bytes.length; i += 7, n++) {
+          const trozo = bytes.slice(i, i + 7);
+          while (trozo.length < 7) trozo.push('00');
+          lineas.push(unir([id, byte(0x20 | (n & 0x0f)), ...trozo]));
+        }
+        return lineas;
+      }
+      if (bytes.length <= 7) return [unir(bytes)];
+      const lineas = [bytes.length.toString(16).toUpperCase().padStart(3, '0')];
+      for (let i = 0, n = 0; i < bytes.length; i += n === 0 ? 6 : 7, n++) {
+        const trozo = bytes.slice(i, i + (n === 0 ? 6 : 7));
+        lineas.push(`${(n & 0x0f).toString(16).toUpperCase()}: ${unir(trozo)}`);
+      }
+      return lineas;
+    }
+
+    if (!this.flags.headers) return [unir(bytes)];
+    const origen = ecu === 'principal' ? '10' : '18';
+    // KWP2000 lleva el largo en el byte de formato; ISO 9141 usa 48 6B.
+    const cabecera = this.profile.protocolNumber === '3'
+      ? ['48', '6B', origen]
+      : [byte(0x80 | bytes.length), 'F1', origen];
+    const todo = [...cabecera, ...bytes];
+    const suma = todo.reduce((a, h) => (a + parseInt(h, 16)) & 0xff, 0);
+    return [unir([...todo, byte(suma)])];
+  }
+
+  /**
+   * Respuesta larga en K-Line: una línea por trozo de cuatro bytes, cada
+   * una con su byte de orden. Así llegan el VIN y las calibraciones.
+   */
+  private largaLegacy(modo: string, pid: string, datos: string[],
+                      ecu: 'principal' | 'segunda' = 'principal'): string[] {
+    const relleno = [...datos];
+    while (relleno.length % 4 !== 0) relleno.unshift('00');
+    const lineas: string[] = [];
+    for (let i = 0, n = 1; i < relleno.length; i += 4, n++) {
+      lineas.push(...this.frame([modo, pid, byte(n), ...relleno.slice(i, i + 4)], ecu));
+    }
+    return lineas;
   }
 }
 

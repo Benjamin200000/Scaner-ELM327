@@ -14,18 +14,13 @@
  * ─────────────────────────────────────────────────────────────────────
  * ESTADO DE VERIFICACIÓN
  *
- * El esquema de bits está en SAE J1979 / ISO 15031-5. No pude leer la
- * norma ni una fuente primaria desde este entorno, así que esta
- * implementación sigue el esquema ampliamente documentado pero NO está
- * verificada contra el documento ni contra un vehículo real.
+ * El esquema de bits y las tablas de monitores están contrastados contra
+ * python-OBD (decoders.py y codes.py), la implementación abierta de
+ * referencia: bit 3 de B distingue compresión, soporte en los bits 0-2,
+ * "no listo" en los bits 4-6, y el byte D marca con 1 lo pendiente.
  *
- * La polaridad es lo delicado: un bit de soporte en 1 significa soportado,
- * y un bit de completitud en 0 significa completado. Invertir el segundo
- * haría que la app diga "listo para revisión" cuando no lo está.
- *
- * Por eso la interfaz muestra los cuatro bytes crudos junto al resultado:
- * se verifica en dos minutos comparando contra un vehículo recién borrado
- * (todo pendiente) y uno con varios días de uso (casi todo completo).
+ * Falta la confirmación contra un vehículo real, así que la interfaz sigue
+ * mostrando los cuatro bytes crudos junto al resultado.
  * ─────────────────────────────────────────────────────────────────────
  */
 
@@ -63,10 +58,9 @@ const CHISPA: { bit: number; id: string; label: string }[] = [
   { bit: 1, id: 'heated_catalyst', label: 'Catalizador calefaccionado' },
   { bit: 2, id: 'evap', label: 'Sistema evaporativo' },
   { bit: 3, id: 'secondary_air', label: 'Aire secundario' },
-  { bit: 4, id: 'ac_refrigerant', label: 'Refrigerante de aire acondicionado' },
   { bit: 5, id: 'o2_sensor', label: 'Sonda lambda' },
   { bit: 6, id: 'o2_heater', label: 'Calefactor de sonda lambda' },
-  { bit: 7, id: 'egr', label: 'Sistema EGR' },
+  { bit: 7, id: 'egr', label: 'EGR / distribución variable' },
 ];
 
 /** Monitores no continuos, motores de encendido por compresión (diésel). */

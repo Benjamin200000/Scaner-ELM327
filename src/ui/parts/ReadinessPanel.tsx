@@ -112,12 +112,11 @@ export function ReadinessPanel({ readiness, mode }: {
             </div>
           )}
           <div style={{ marginTop: 8 }}>
-            <Notice tone="warn" title="Decodificación sin verificar">
-              Sigue el esquema documentado de SAE J1979, pero no está
-              contrastada contra la norma ni contra un vehículo real. Para
-              verificarla: en un auto recién borrado casi todo debería figurar
-              PENDIENTE, y en uno con varios días de uso casi todo COMPLETO.
-              Si sale al revés, la polaridad está invertida.
+            <Notice tone="info" title="Cómo se verificó esta decodificación">
+              El esquema de bits coincide con el de python-OBD, la
+              implementación abierta de referencia. Falta la confirmación en
+              un vehículo real: recién borrado, casi todo debería figurar
+              PENDIENTE; con varios días de uso, casi todo COMPLETO.
             </Notice>
           </div>
         </div>

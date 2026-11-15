@@ -15,6 +15,9 @@ import { type EvaluatedParam, evaluateParam } from '@/core/engine/evaluate';
 import { relevantSystems, type SystemDef } from '@/core/engine/systems';
 import type { VehicleContext } from '@/knowledge';
 import { History, type HistoryEntry } from './history';
+import { leerModo06, type TestResult } from '@/core/obd2/mode06';
+import { leerIdentificacionUds, type DidValue } from '@/core/uds/ident';
+import { probarAdaptador, type InformeAdaptador } from '@/core/elm327/adapterTest';
 import { ServiceRunner, gate, type GateResult } from '@/core/service/runner';
 import { routineById } from '@/core/service/routines';
 import type { RoutineContext, RunMode, RunResult, StepOutcome } from '@/core/service/types';
@@ -28,8 +31,15 @@ import type { RoutineContext, RunMode, RunResult, StepOutcome } from '@/core/ser
  */
 
 export type Screen =
-  | 'conexion' | 'resumen' | 'codigos' | 'datos'
+  | 'conexion' | 'resumen' | 'computadora' | 'codigos' | 'datos' | 'emisiones'
   | 'funciones' | 'informe' | 'historial' | 'terminal';
+
+/** Un paso de la conexión, para mostrar qué está haciendo la app. */
+export interface PasoBitacora {
+  at: number;
+  fase: SessionProgress['phase'];
+  texto: string;
+}
 
 export type DetailMode = 'simple' | 'tecnico';
 
@@ -80,6 +90,15 @@ interface AppState {
   agentVersion: string | null;
 
   taller: { nombre: string; tecnico: string; orden: string; contacto: string };
+  /** Qué fue haciendo la app al conectar, paso por paso. */
+  bitacora: PasoBitacora[];
+  /** Resultados del modo 06; null = todavía no se leyeron. */
+  mode06: TestResult[] | null;
+  /** Identificación UDS por ECU. */
+  uds: Record<string, DidValue[]>;
+  adaptador: InformeAdaptador | null;
+  /** Operación larga en curso: 'modo06', 'uds:7E8', 'adaptador'. */
+  ocupado: string | null;
   /** Datos congelados: la foto de los sensores al guardarse el código. */
   freeze: { dtc: string | null; values: Map<number, number | null> } | null;
   freezeCargando: boolean;
@@ -109,6 +128,9 @@ interface AppState {
   probeAgent(): Promise<void>;
   setTaller(t: Partial<AppState['taller']>): void;
   cargarFreezeFrame(): Promise<void>;
+  cargarModo06(): Promise<void>;
+  cargarUds(ecu: string): Promise<void>;
+  ejecutarPruebaAdaptador(): Promise<void>;
   cargarHistorial(): Promise<void>;
   abrirDelHistorial(entry: HistoryEntry | null): void;
   borrarDelHistorial(id: number): Promise<void>;
@@ -213,6 +235,7 @@ function guardar(clave: string, valor: string): void {
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let cancelRequested = false;
+let vueltaEnCurso: Promise<void> | null = null;
 
 export const useApp = create<AppState>((set, get) => ({
   screen: 'conexion',
@@ -252,6 +275,11 @@ export const useApp = create<AppState>((set, get) => ({
     orden: '',
     contacto: leer('tallerContacto') ?? '',
   },
+  bitacora: [],
+  mode06: null,
+  uds: {},
+  adaptador: null,
+  ocupado: null,
   freeze: null,
   freezeCargando: false,
   historial: [],
@@ -278,6 +306,33 @@ export const useApp = create<AppState>((set, get) => ({
     guardar('tallerContacto', taller.contacto);
     return { taller };
   }),
+
+  /** Resultados de los autodiagnósticos (modo 06). */
+  async cargarModo06() {
+    const { session } = get();
+    if (!session) return;
+    await exclusivo(set, get, 'modo06', async () => {
+      set({ mode06: await leerModo06(session.obd) });
+    });
+  },
+
+  /** Identificación profunda de una unidad por UDS. */
+  async cargarUds(ecu) {
+    const { session } = get();
+    if (!session) return;
+    await exclusivo(set, get, `uds:${ecu}`, async () => {
+      const valores = await leerIdentificacionUds(session.driver, ecu);
+      set((st) => ({ uds: { ...st.uds, [ecu]: valores } }));
+    });
+  },
+
+  async ejecutarPruebaAdaptador() {
+    const { session } = get();
+    if (!session) return;
+    await exclusivo(set, get, 'adaptador', async () => {
+      set({ adaptador: await probarAdaptador(session.driver) });
+    });
+  },
 
   /**
    * Lee los datos congelados.
@@ -412,6 +467,8 @@ export const useApp = create<AppState>((set, get) => ({
     cancelRequested = false;
     const wasPaused = get().paused;
     set({ routineBusy: true, routineRun: null, routineOutcomes: [], paused: true });
+    // Que termine la vuelta de sondeo en curso antes de tocar la ECU.
+    if (vueltaEnCurso !== null) await vueltaEnCurso;
 
     try {
       const runner = new ServiceRunner(session.driver);
@@ -482,7 +539,10 @@ export const useApp = create<AppState>((set, get) => ({
 
   async connect(kind) {
     const { simProfileId, forcedProtocol, manual, agentUrl, agentToken, agentInterfaceId } = get();
-    set({ fault: null, values: new Map(), series: new Map(), dtcs: [], trace: [] });
+    set({
+      fault: null, values: new Map(), series: new Map(), dtcs: [], trace: [],
+      bitacora: [], mode06: null, uds: {}, adaptador: null, freeze: null,
+    });
 
     let transport: Transport;
     try {
@@ -493,7 +553,10 @@ export const useApp = create<AppState>((set, get) => ({
       set({ fault: toFault(err), progress: { phase: 'error', detail: 'No se pudo conectar' } });
       return;
     }
-    const session = new DiagnosticSession(transport, (progress) => set({ progress }));
+    const session = new DiagnosticSession(transport, (progress) => set((st) => ({
+      progress,
+      bitacora: [...st.bitacora, { at: Date.now(), fase: progress.phase, texto: progress.detail }],
+    })));
     set({ session });
 
     const unsubTrace = session.onTrace((entry) => {
@@ -626,7 +689,9 @@ function startPolling(
     if (!session) return;
     if (!paused) {
       try {
-        const result = await session.poll();
+        const vuelta = session.poll();
+        vueltaEnCurso = vuelta.then(() => {}, () => {});
+        const result = await vuelta;
         set({
           values: mergeValues(get().values, result.values),
           series: appendSeries(get().series, result.values, result.at),
@@ -648,6 +713,33 @@ function startPolling(
 function stopPolling(): void {
   if (pollTimer !== null) clearTimeout(pollTimer);
   pollTimer = null;
+}
+
+/**
+ * Corre una operación con el sondeo detenido.
+ *
+ * Hace falta para todo lo que cambia la configuración del adaptador (la
+ * identificación UDS fija la cabecera a una ECU): si el ciclo de datos en
+ * vivo intercalara sus solicitudes, saldrían dirigidas a la unidad
+ * equivocada. Se espera a que termine la vuelta en curso antes de empezar.
+ */
+async function exclusivo(
+  set: (p: Partial<AppState>) => void,
+  get: () => AppState,
+  nombre: string,
+  fn: () => Promise<void>,
+): Promise<void> {
+  if (get().ocupado !== null) return;
+  const estabaPausado = get().paused;
+  set({ ocupado: nombre, paused: true });
+  try {
+    if (vueltaEnCurso !== null) await vueltaEnCurso.catch(() => {});
+    await fn();
+  } catch (err) {
+    set({ fault: toFault(err) });
+  } finally {
+    set({ ocupado: null, paused: estabaPausado });
+  }
 }
 
 const mergeValues = (

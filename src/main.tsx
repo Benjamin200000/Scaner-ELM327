@@ -11,3 +11,14 @@ createRoot(root).render(
     <App />
   </StrictMode>,
 );
+
+// Uso sin conexión. Solo en producción y donde el navegador lo permita: en
+// desarrollo un service worker sirve archivos viejos y confunde.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {
+      // Sin service worker la app funciona igual, solo que necesita red
+      // para abrir.
+    });
+  });
+}

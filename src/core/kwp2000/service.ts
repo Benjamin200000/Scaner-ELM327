@@ -1,6 +1,7 @@
 import type { Elm327Driver } from '@/core/elm327/driver';
 import { ElmError } from '@/core/elm327/errors';
 import { hexBytes } from '@/core/elm327/parse';
+import { familyOf, parseEcuMessages } from '@/core/elm327/frames';
 import { describeNrc, SID } from './sid';
 
 /**
@@ -78,7 +79,13 @@ export class Kwp2000Service {
 
     for (let attempt = 0; attempt <= MAX_PENDING_RETRIES; attempt++) {
       const res = await this.driver.send(hexReq, { timeoutMs });
-      const bytes = hexBytes(res.lines.join(''));
+      // Con cabeceras, cada línea trae dirección y checksum: se arma por
+      // ECU y se busca la respuesta a ESTE servicio. Buscar el byte a ciegas
+      // en el flujo crudo podía toparse con un byte de cabecera.
+      const mensajes = parseEcuMessages(res.lines, familyOf(this.driver.protocol));
+      const propio = mensajes.find((m) =>
+        m.data[0] === sid + 0x40 || (m.data[0] === 0x7f && m.data[1] === sid));
+      const bytes = propio?.data ?? hexBytes(res.lines.join(''));
       const parsed = classify(sid, bytes);
 
       if (parsed.nrc === RESPONSE_PENDING) {

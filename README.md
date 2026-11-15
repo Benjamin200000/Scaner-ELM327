@@ -175,6 +175,19 @@ aceleración.
 - **Reensamblado ISO-TP**: las respuestas largas con headers activos
   llegan partidas en varias tramas CAN con bytes de control. Sin
   tratarlo, el VIN y cualquier lectura agrupada salen corruptas.
+- **Respuestas separadas por ECU**: con cabeceras activas cada línea dice
+  quién la envió. Motor y transmisión pueden contestar la misma pregunta,
+  y mezclarlas fabricaba datos. El armado sigue las reglas de python-OBD
+  para CAN (ISO-TP) y para K-Line (cabecera, checksum, byte de orden).
+- **Identificación de la computadora**: unidades que contestan en el bus,
+  y de cada una nombre, calibración y CVN (modo 09); por UDS, número de
+  repuesto, versiones de software y hardware y número de serie.
+- **Decodificación del VIN**: fabricante, país y año modelo.
+- **Modo 06**: resultados de los autodiagnósticos contra sus límites, para
+  ver un componente que aprueba raspando antes de que haya código.
+- **Prueba del adaptador**: qué comandos soporta el clon que está conectado.
+- **Bitácora de conexión**: qué hizo la app, paso por paso y con tiempos.
+- **Instalable y sin conexión** (PWA).
 - **Monitores de emisiones** (PID 01) con veredicto de revisión técnica
 - **Datos congelados** (modo 02): la foto de los sensores en el momento
   en que la ECU guardó el código
@@ -225,12 +238,25 @@ y decenas de miles específicos de fabricante. La base crece agregando
 entradas con su procedencia declarada; agregar números plausibles pero no
 verificados rompería la garantía central del proyecto.
 
-La decodificación de los **monitores de emisiones** sigue el esquema
-documentado de SAE J1979 pero no está contrastada contra la norma ni contra
-un vehículo real. La interfaz muestra los cuatro bytes crudos junto al
-resultado y lo advierte. Para verificarla: en un auto recién borrado casi
-todo debería figurar PENDIENTE y en uno con varios días de uso casi todo
-COMPLETO; si sale al revés, la polaridad está invertida.
+La decodificación de los **monitores de emisiones** está contrastada contra
+python-OBD, la implementación abierta de referencia. Falta confirmarla en un
+vehículo real, y la interfaz sigue mostrando los cuatro bytes crudos.
+
+Los **nombres de monitores del modo 06** fuera de las sondas lambda no están
+contrastados contra una fuente primaria y van marcados. El aprobado o
+reprobado no depende de ellos: es el valor contra los límites que informa la
+propia ECU.
+
+### Leer el mapa de la ECU
+
+No está implementado, y con un ELM327 no es viable en general. Leer la
+memoria flash usa servicios de fabricante (lectura de memoria por dirección
+o carga de datos) detrás de un acceso de seguridad cuya clave es propia de
+cada ECU, y el ELM327 limita el largo de los mensajes y la temporización.
+Varias ECU modernas directamente no permiten leer la flash por el conector.
+Lo que sí se lee por OBD es la identidad de la calibración: número de
+repuesto, versión de software y CVN, que es lo que hace falta para
+conseguir el archivo correcto y para detectar una reprogramación.
 
 Las escalas de los PID ampliados (0x70, 0x78, 0x7A, 0x7C) están marcadas
 `verified: false`: su layout varía entre fabricantes y no se pudo verificar

@@ -9,6 +9,8 @@ export interface Dtc {
   code: string;
   group: DtcGroup;
   kind: DtcKind;
+  /** ECU que lo informó, cuando la respuesta trae cabecera. */
+  ecu?: string;
 }
 
 const GROUPS: DtcGroup[] = ['P', 'C', 'B', 'U'];

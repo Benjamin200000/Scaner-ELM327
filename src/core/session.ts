@@ -1,7 +1,8 @@
 import { Elm327Driver, type AdapterIdentity, type TraceEntry } from '@/core/elm327/driver';
 import { ElmError } from '@/core/elm327/errors';
 import type { ElmProtocol } from '@/core/elm327/protocols';
-import { Obd2Service, type VehicleIdentity } from '@/core/obd2/service';
+import { Obd2Service, type EcuIdentity, type VehicleIdentity } from '@/core/obd2/service';
+import { decodificarVin, type VinInfo } from '@/knowledge/vin';
 import type { Dtc } from '@/core/obd2/dtc';
 import { PID_DEFS } from '@/core/obd2/pids';
 import { availableParams } from '@/core/engine/systems';
@@ -34,6 +35,10 @@ export interface SessionInfo {
   agrupacion: boolean;
   /** Estado de los monitores de emisiones al conectar. */
   readiness: Readiness | null;
+  /** Unidades que contestan en el bus, con su identificación. */
+  ecus: EcuIdentity[];
+  /** Fabricante, país y año modelo deducidos del VIN. */
+  vinInfo: VinInfo | null;
 }
 
 export interface PollResult {
@@ -86,23 +91,53 @@ export class DiagnosticSession {
    * y sin PID descubiertos la interfaz no sabe qué secciones mostrar.
    */
   async connect(forcedProtocol?: string, declaredMake?: string): Promise<SessionInfo> {
-    this.report('abriendo-enlace', 'Abriendo enlace con el adaptador');
+    this.report('abriendo-enlace', 'Abriendo el enlace con el adaptador');
     await this.transport.open();
     this.driver.attach();
 
-    this.report('inicializando', 'Inicializando adaptador y detectando protocolo');
+    this.report('inicializando', 'Reiniciando el adaptador y detectando el protocolo del vehículo');
     const protocol = await this.driver.initialize(forcedProtocol);
+    this.report('inicializando',
+      `Adaptador ${this.driver.identity?.version ?? 'sin identificar'} · ` +
+      `protocolo ${protocol?.name ?? 'sin resolver'}`);
 
-    this.report('identificando', 'Leyendo identificación y parámetros soportados');
+    this.report('identificando', 'Midiendo la tensión de batería');
     const voltage = await this.driver.readVoltage();
+
+    this.report('identificando', 'Preguntando qué parámetros soporta la ECU');
     const supportedPids = await this.obd.discoverSupportedPids();
-    const identity = await this.obd.readIdentity();
-    const fuel = await this.readFuelType(supportedPids);
+    this.report('identificando',
+      `${supportedPids.size} parámetros soportados · ` +
+      `${this.obd.ecusVistas.size} ${this.obd.ecusVistas.size === 1 ? 'unidad contesta' : 'unidades contestan'}`);
+
+    this.report('identificando', 'Leyendo el VIN');
+    const vin = await this.obd.readVin().catch(() => null);
+    this.report('identificando', 'Leyendo calibración y nombre de cada unidad');
+    const ecus: EcuIdentity[] = await this.obd.readEcuIdentities().catch(() => []);
+    // Una unidad puede contestar datos sin exponer identificación: figura igual.
+    for (const ecu of this.obd.ecusVistas) {
+      if (ecu !== '?' && !ecus.some((e) => e.ecu === ecu)) {
+        ecus.push({ ecu, calIds: [], cvns: [], name: null });
+      }
+    }
+    ecus.sort((a, b) => parseInt(a.ecu, 16) - parseInt(b.ecu, 16));
+    const identity = {
+      vin,
+      calibrationId: ecus[0]?.calIds[0] ?? null,
+      ecuName: ecus[0]?.name ?? null,
+    };
+
+    this.report('identificando', 'Leyendo el estado de los monitores de emisiones');
     const readiness = await this.obd.readReadiness().catch(() => null);
+    // Si la ECU no declara el combustible, el tipo de encendido que informan
+    // los monitores lo resuelve: compresión es diésel.
+    const fuel = await this.readFuelType(supportedPids)
+      ?? (readiness?.tipoEncendido === 'compresion' ? 'diesel' as const : null);
 
     // Se prueba una sola vez, al conectar: si la ECU acepta solicitudes
     // agrupadas, el ciclo de datos en vivo se vuelve varias veces más
     // rápido. Si no, se sigue de a uno sin que nada más cambie.
+    this.report('identificando', 'Probando si la ECU acepta lecturas agrupadas');
     const candidatos = [0x0c, 0x0d, 0x04].filter((p) => supportedPids.has(p));
     const agrupacion = await this.obd.probarAgrupacion(candidatos).catch(() => false);
 
@@ -121,10 +156,14 @@ export class DiagnosticSession {
       fuel,
       agrupacion,
       readiness,
+      ecus,
+      vinInfo: vin !== null ? decodificarVin(vin) : null,
     };
     this._info = info;
     this.planPolling(supportedPids);
-    this.report('listo', 'Comunicación activa');
+    this.report('listo', agrupacion
+      ? 'Comunicación activa, con lecturas agrupadas'
+      : 'Comunicación activa');
     return info;
   }
 

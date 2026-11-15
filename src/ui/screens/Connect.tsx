@@ -19,7 +19,7 @@ import { LinkDot } from '../parts/Status';
  */
 export function Connect() {
   const {
-    progress, info, fault, manual, simProfileId, forcedProtocol,
+    progress, info, fault, manual, simProfileId, forcedProtocol, bitacora,
     connect, disconnect, setManual, setSimProfile, setForcedProtocol, clearFault,
   } = useApp();
   const session = useApp((s) => s.session);
@@ -104,6 +104,40 @@ export function Connect() {
           </div>
         )}
       </Panel>
+
+      {bitacora.length > 0 && (
+        <Panel title="Qué hizo la conexión" aside={
+          <span className="label" style={{ color: 'var(--color-ink-dim)' }}>
+            {bitacora.length} pasos · {((bitacora.at(-1)!.at - bitacora[0]!.at) / 1000).toFixed(1)} s
+          </span>
+        }>
+          <ol style={{ listStyle: 'none', margin: 0, padding: '6px 0' }}>
+            {bitacora.map((p, i) => {
+              const ultimo = i === bitacora.length - 1;
+              const enCurso = ultimo && working;
+              return (
+                <li key={`${p.at}-${i}`} style={{
+                  display: 'grid', gridTemplateColumns: '18px 52px minmax(0,1fr)',
+                  gap: 6, padding: '2px 12px', fontSize: 12, alignItems: 'baseline',
+                }}>
+                  <span aria-hidden className="num" style={{
+                    color: p.fase === 'error' ? 'var(--color-fail)'
+                      : enCurso ? 'var(--color-warn)' : 'var(--color-ok)',
+                  }}>
+                    {p.fase === 'error' ? '✕' : enCurso ? '›' : '✓'}
+                  </span>
+                  <span className="num" style={{ color: 'var(--color-ink-faint)', fontSize: 10.5 }}>
+                    +{((p.at - bitacora[0]!.at) / 1000).toFixed(1)}s
+                  </span>
+                  <span style={{ color: enCurso ? 'var(--color-ink)' : 'var(--color-ink-dim)' }}>
+                    {p.texto}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        </Panel>
+      )}
 
       {connected && <AdapterVerdict info={info} transport={tInfo} />}
 

@@ -181,15 +181,26 @@ export class J2534ComoElm extends EventEmitter {
     return lineas.join('\r');
   }
 
-  /** Arma la línea como la emitiría un ELM327, respetando ATH y ATS. */
+  /**
+   * Arma las líneas como las emitiría un ELM327, respetando ATH y ATS.
+   *
+   * Con cabeceras, un mensaje de más de siete bytes sale partido en primera
+   * trama y consecutivas con su PCI, igual que el chip real. Emitirlo en una
+   * sola línea haría que el byte de largo se lea como un PCI inválido.
+   */
   #formatear(payload) {
-    const bytes = Array.from(payload, (b) => b.toString(16).toUpperCase().padStart(2, '0'));
-    // Con headers, un ELM327 sobre CAN de 11 bits antepone la dirección de
-    // la ECU en tres dígitos hex y el largo.
-    const partes = this.#headers
-      ? ['7E8', bytes.length.toString(16).toUpperCase().padStart(2, '0'), ...bytes]
-      : bytes;
-    return this.#espacios ? partes.join(' ') : partes.join('');
+    const hex = (n) => n.toString(16).toUpperCase().padStart(2, '0');
+    const bytes = Array.from(payload, hex);
+    const unir = (p) => (this.#espacios ? p.join(' ') : p.join(''));
+    if (!this.#headers) return unir(bytes);
+    if (bytes.length <= 7) return unir(['7E8', hex(bytes.length), ...bytes]);
+    const lineas = [unir([
+      '7E8', hex(0x10 | (bytes.length >> 8)), hex(bytes.length & 0xff), ...bytes.slice(0, 6),
+    ])];
+    for (let i = 6, n = 1; i < bytes.length; i += 7, n++) {
+      lineas.push(unir(['7E8', hex(0x20 | (n & 0x0f)), ...bytes.slice(i, i + 7)]));
+    }
+    return lineas.join('\r');
   }
 
   close() {

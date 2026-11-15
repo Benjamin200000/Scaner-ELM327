@@ -4,7 +4,8 @@ import { type EvaluatedParam, STATUS_LABEL, STATUS_SEVERITY } from '@/core/engin
 import { LEVEL_LABEL } from '@/core/engine/rules';
 import { Notice, Panel } from '../parts/Panel';
 import { StatusChip } from '../parts/Status';
-import { ReadinessPanel } from '../parts/ReadinessPanel';
+import { LiveTiles } from '../parts/LiveTiles';
+import { evaluarRevision } from '@/core/obd2/readiness';
 
 /**
  * Resumen del vehículo.
@@ -16,7 +17,7 @@ import { ReadinessPanel } from '../parts/ReadinessPanel';
  * verificó.
  */
 export function Dashboard() {
-  const { info, systems, evaluated, diagnosis, dtcs, setScreen, mode } = useApp();
+  const { info, systems, evaluated, diagnosis, dtcs, setScreen, series } = useApp();
   if (!info) return null;
 
   const evs = evaluated();
@@ -29,7 +30,16 @@ export function Dashboard() {
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      <ReadinessPanel readiness={info.readiness} mode={mode} />
+      <Panel title="En vivo" aside={
+        <button className="label" onClick={() => setScreen('datos')}
+          style={{ background: 'none', border: 0, color: 'var(--color-info)' }}>
+          Todos los parámetros
+        </button>
+      }>
+        <LiveTiles evaluated={evs} series={series} />
+      </Panel>
+
+      <Revision onAbrir={() => setScreen('emisiones')} />
 
       <Panel
         title="Estado del vehículo"
@@ -152,7 +162,7 @@ export function Dashboard() {
               </div>
             ) : (
               dtcs.slice(0, 5).map((d) => (
-                <div key={`${d.code}-${d.kind}`} className="row"
+                <div key={`${d.code}-${d.kind}-${d.ecu ?? ''}`} className="row"
                   style={{ gridTemplateColumns: 'auto minmax(0,1fr)' }}>
                   <span className="num" style={{ fontSize: 14 }}>{d.code}</span>
                   <span className="label" style={{ textAlign: 'right' }}>
@@ -215,6 +225,35 @@ export function Dashboard() {
         </div>
       </Panel>
     </div>
+  );
+}
+
+/** Veredicto de revisión técnica en una línea; el detalle vive en Emisiones. */
+function Revision({ onAbrir }: { onAbrir: () => void }) {
+  const readiness = useApp((s) => s.info?.readiness ?? null);
+  const v = evaluarRevision(readiness);
+  const tono = v.aprobaria === true ? 'var(--color-ok)'
+    : v.aprobaria === false ? 'var(--color-fail)' : 'var(--color-idle)';
+  return (
+    <button onClick={onAbrir} className="panel" style={{
+      display: 'flex', gap: 12, alignItems: 'baseline', flexWrap: 'wrap',
+      padding: '10px 12px', textAlign: 'left', width: '100%',
+      borderLeft: `3px solid ${tono}`,
+    }}>
+      <span className="label">Revisión técnica</span>
+      <span style={{
+        fontSize: 12.5, fontWeight: 700, letterSpacing: '0.04em',
+        textTransform: 'uppercase', color: tono,
+      }}>
+        {v.aprobaria === true ? 'Pasaría' : v.aprobaria === false ? 'No pasaría' : 'Sin datos'}
+      </span>
+      <span style={{ fontSize: 11.5, color: 'var(--color-ink-dim)', flex: '1 1 220px' }}>
+        {v.motivo}
+      </span>
+      {readiness !== null && (
+        <span className="num label">{v.completos}/{v.soportados} monitores</span>
+      )}
+    </button>
   );
 }
 

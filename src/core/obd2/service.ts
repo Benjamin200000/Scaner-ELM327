@@ -1,6 +1,12 @@
 import type { Elm327Driver } from '@/core/elm327/driver';
 import { ElmError } from '@/core/elm327/errors';
-import { extractPayload, joinObdBytes } from '@/core/elm327/parse';
+import { joinObdBytes } from '@/core/elm327/parse';
+import {
+  type EcuMessage,
+  familyOf,
+  ordenarEcus,
+  parseEcuMessages,
+} from '@/core/elm327/frames';
 import { type Dtc, type DtcKind, parseDtcPayload } from './dtc';
 import { PID_DEFS, type PidDef, pidByNumber } from './pids';
 import { decodificarReadiness, type Readiness } from './readiness';
@@ -22,6 +28,15 @@ export interface PidReading {
   at: number;
 }
 
+export interface EcuIdentity {
+  /** Dirección de la unidad: '7E8', '10'… */
+  ecu: string;
+  calIds: string[];
+  /** Números de verificación de calibración, en hexadecimal. */
+  cvns: string[];
+  name: string | null;
+}
+
 export interface VehicleIdentity {
   vin: string | null;
   calibrationId: string | null;
@@ -31,7 +46,48 @@ export interface VehicleIdentity {
 const hex2 = (n: number): string => n.toString(16).toUpperCase().padStart(2, '0');
 
 export class Obd2Service {
+  /** ECU que contestaron algo durante la sesión. */
+  readonly ecusVistas = new Set<string>();
+
   constructor(private readonly driver: Elm327Driver) {}
+
+  /**
+   * Envía un comando y devuelve los mensajes armados, uno por ECU.
+   *
+   * Si las líneas no traen cabecera (un adaptador que ignora ATH1), cae al
+   * camino sin cabeceras y entrega un único mensaje de ECU desconocida, en
+   * vez de quedarse sin datos.
+   */
+  async consultar(
+    comando: string,
+    modo: number,
+    timeoutMs?: number,
+  ): Promise<EcuMessage[]> {
+    const res = await this.driver.send(
+      comando, timeoutMs !== undefined ? { timeoutMs } : {},
+    );
+    const positivo = modo + 0x40;
+    const mensajes = parseEcuMessages(res.lines, familyOf(this.driver.protocol))
+      .filter((m) => m.data[0] === positivo)
+      .sort((a, b) => ordenarEcus(a.ecu, b.ecu));
+    if (mensajes.length > 0) {
+      for (const m of mensajes) this.ecusVistas.add(m.ecu);
+      return mensajes;
+    }
+    const planos = joinObdBytes(res.lines);
+    if (planos === null) return [];
+    const i = planos.indexOf(positivo);
+    return i === -1 ? [] : [{ ecu: '?', data: planos.slice(i) }];
+  }
+
+  /** Datos del primer mensaje que responde a ese modo y PID. */
+  private static datos(mensajes: EcuMessage[], pid?: number): number[] | null {
+    for (const m of mensajes) {
+      if (pid === undefined) return m.data.slice(1);
+      if (m.data[1] === pid) return m.data.slice(2);
+    }
+    return null;
+  }
 
   /**
    * Descubre qué PID del modo 01 soporta la ECU.
@@ -42,26 +98,31 @@ export class Obd2Service {
   async discoverSupportedPids(): Promise<Set<number>> {
     const supported = new Set<number>();
     for (let base = 0x00; base <= 0xc0; base += 0x20) {
-      let payload: number[] | null;
+      let mensajes: EcuMessage[];
       try {
-        payload = await this.rawPid(0x01, base);
+        mensajes = await this.consultar(`01${hex2(base)}`, 0x01);
       } catch (err) {
         if (err instanceof ElmError && err.isExpected) break;
         throw err;
       }
-      if (payload === null || payload.length < 4) break;
-
-      for (let i = 0; i < 32; i++) {
-        const byte = payload[i >> 3];
-        if (byte === undefined) continue;
-        if ((byte & (0x80 >> (i & 7))) !== 0) {
-          supported.add(base + i + 1);
+      // Motor y transmisión pueden contestar los dos: se toma la unión,
+      // porque un PID es legible si cualquiera de las ECU lo soporta.
+      let hasNext = false;
+      let alguno = false;
+      for (const m of mensajes) {
+        if (m.data[1] !== base) continue;
+        const payload = m.data.slice(2);
+        if (payload.length < 4) continue;
+        alguno = true;
+        for (let i = 0; i < 32; i++) {
+          const byte = payload[i >> 3];
+          if (byte === undefined) continue;
+          if ((byte & (0x80 >> (i & 7))) !== 0) supported.add(base + i + 1);
         }
+        // El último bit del bloque indica si hay que seguir preguntando.
+        if (((payload[3] ?? 0) & 0x01) !== 0) hasNext = true;
       }
-      // El último bit del bloque indica si hay que seguir preguntando.
-      const last = payload[3];
-      const hasNext = last !== undefined && (last & 0x01) !== 0;
-      if (!hasNext) break;
+      if (!alguno || !hasNext) break;
     }
     // Los PID de bloque no son parámetros: no deben aparecer como datos.
     for (let base = 0x00; base <= 0xc0; base += 0x20) supported.delete(base);
@@ -87,30 +148,31 @@ export class Obd2Service {
   }
 
   private async rawPid(mode: number, pid: number): Promise<number[] | null> {
-    const res = await this.driver.send(`${hex2(mode)}${hex2(pid)}`);
-    const bytes = joinObdBytes(res.lines);
-    if (bytes === null) return null;
-    return extractPayload(bytes, mode, pid);
+    const mensajes = await this.consultar(`${hex2(mode)}${hex2(pid)}`, mode);
+    return Obd2Service.datos(mensajes, pid);
   }
 
   async readDtcs(kind: DtcKind): Promise<Dtc[]> {
     const mode = kind === 'stored' ? 0x03 : kind === 'pending' ? 0x07 : 0x0a;
-    let res;
+    let mensajes: EcuMessage[];
     try {
-      res = await this.driver.send(hex2(mode), { timeoutMs: 4000 });
+      mensajes = await this.consultar(hex2(mode), mode, 4000);
     } catch (err) {
       // Sin códigos, KWP devuelve NO DATA en lugar de una lista vacía.
       if (err instanceof ElmError && err.isExpected) return [];
       throw err;
     }
-    const bytes = joinObdBytes(res.lines);
-    if (bytes === null) return [];
-    const payload = extractPayload(bytes, mode);
-    if (payload === null) return [];
     // Solo CAN/ISO-TP intercala el byte de cantidad entre el modo y los
     // códigos. Confundirse acá significa inventar o perder un código.
     const hasCountByte = this.driver.protocol?.family === 'can';
-    return parseDtcPayload(payload, kind, hasCountByte);
+    // Cada ECU informa los suyos: se conserva cuál dijo qué.
+    const out: Dtc[] = [];
+    for (const m of mensajes) {
+      for (const d of parseDtcPayload(m.data.slice(1), kind, hasCountByte)) {
+        out.push(m.ecu === '?' ? d : { ...d, ecu: m.ecu });
+      }
+    }
+    return out;
   }
 
   /**
@@ -125,29 +187,80 @@ export class Obd2Service {
 
   /** Identificación por modo 09. Lo que no esté, queda en null. */
   async readIdentity(): Promise<VehicleIdentity> {
+    const ecus = await this.readEcuIdentities();
+    const motor = ecus[0];
     return {
-      vin: await this.readMode09Text(0x02),
-      calibrationId: await this.readMode09Text(0x04),
-      ecuName: await this.readMode09Text(0x0a),
+      vin: await this.readVin(),
+      calibrationId: motor?.calIds[0] ?? null,
+      ecuName: motor?.name ?? null,
     };
   }
 
-  private async readMode09Text(pid: number): Promise<string | null> {
+  /** Datos de un PID del modo 09, por ECU, ya sin el byte de cantidad. */
+  private async modo09(pid: number): Promise<{ ecu: string; datos: number[] }[]> {
+    let mensajes: EcuMessage[];
     try {
-      const res = await this.driver.send(`09${hex2(pid)}`, { timeoutMs: 4000 });
-      const bytes = joinObdBytes(res.lines);
-      if (bytes === null) return null;
-      const payload = extractPayload(bytes, 0x09, pid);
-      if (payload === null || payload.length === 0) return null;
-      // El primer byte es la cantidad de mensajes de datos, no texto.
-      const chars = payload.slice(1).filter((c) => c >= 0x20 && c <= 0x7e);
-      const text = String.fromCharCode(...chars).trim();
-      return text.length > 0 ? text : null;
+      mensajes = await this.consultar(`09${hex2(pid)}`, 0x09, 5000);
     } catch (err) {
-      if (err instanceof ElmError && err.isExpected) return null;
+      if (err instanceof ElmError && err.isExpected) return [];
       throw err;
     }
+    // En CAN, después del PID viene la cantidad de elementos. En K-Line ese
+    // lugar lo ocupa el byte de orden, que ya se quitó al armar el mensaje.
+    const saltar = this.driver.protocol?.family === 'can' ? 3 : 2;
+    return mensajes
+      .filter((m) => m.data[1] === pid)
+      .map((m) => ({ ecu: m.ecu, datos: m.data.slice(saltar) }));
   }
+
+  async readVin(): Promise<string | null> {
+    const r = await this.modo09(0x02);
+    const datos = r[0]?.datos;
+    if (!datos) return null;
+    const texto = String.fromCharCode(...datos.filter((c) => c >= 0x20 && c <= 0x7e)).trim();
+    // Un VIN son 17 caracteres; menos que eso no es un VIN.
+    return texto.length >= 17 ? texto.slice(-17) : null;
+  }
+
+  /**
+   * Identificación de cada unidad que contesta: calibraciones, números de
+   * verificación (CVN) y nombre.
+   *
+   * El CVN es una suma de control de la calibración calculada por la propia
+   * ECU. Si cambia entre dos visitas sin que haya habido una actualización
+   * oficial, el software fue modificado.
+   */
+  async readEcuIdentities(): Promise<EcuIdentity[]> {
+    const porEcu = new Map<string, EcuIdentity>();
+    const de = (ecu: string): EcuIdentity => {
+      let e = porEcu.get(ecu);
+      if (!e) {
+        e = { ecu, calIds: [], cvns: [], name: null };
+        porEcu.set(ecu, e);
+      }
+      return e;
+    };
+    const ascii = (b: number[]): string =>
+      String.fromCharCode(...b.filter((c) => c >= 0x20 && c <= 0x7e)).trim();
+
+    for (const { ecu, datos } of await this.modo09(0x04)) {
+      for (let i = 0; i < datos.length; i += 16) {
+        const t = ascii(datos.slice(i, i + 16));
+        if (t.length > 0) de(ecu).calIds.push(t);
+      }
+    }
+    for (const { ecu, datos } of await this.modo09(0x06)) {
+      for (let i = 0; i + 3 < datos.length; i += 4) {
+        de(ecu).cvns.push(datos.slice(i, i + 4).map(hex2).join(''));
+      }
+    }
+    for (const { ecu, datos } of await this.modo09(0x0a)) {
+      const t = ascii(datos);
+      if (t.length > 0) de(ecu).name = t;
+    }
+    return [...porEcu.values()].sort((a, b) => ordenarEcus(a.ecu, b.ecu));
+  }
+
   /**
    * Estado de los monitores de emisiones (PID 01 del modo 01).
    *
@@ -222,10 +335,8 @@ export class Obd2Service {
     frame: number,
     esperados?: number,
   ): Promise<number[] | null> {
-    const res = await this.driver.send(`02${hex2(pid)}${hex2(frame)}`, { timeoutMs: 3000 });
-    const bytes = joinObdBytes(res.lines);
-    if (bytes === null) return null;
-    const payload = extractPayload(bytes, 0x02, pid);
+    const mensajes = await this.consultar(`02${hex2(pid)}${hex2(frame)}`, 0x02, 3000);
+    const payload = Obd2Service.datos(mensajes, pid);
     if (payload === null) return null;
 
     // La respuesta repite el número de trama después del PID. Algunas
@@ -257,23 +368,19 @@ export class Obd2Service {
     const readings = new Map<number, PidReading>();
     if (pedidos.length === 0) return { readings, missing: [] };
 
-    const res = await this.driver.send(`01${pedidos.map(hex2).join('')}`, {
-      timeoutMs: 3000,
-    });
-    const bytes = joinObdBytes(res.lines);
-    if (bytes === null) return { readings, missing: pedidos };
-
-    const payload = extractPayload(bytes, 0x01);
-    if (payload === null) return { readings, missing: pedidos };
-
+    const mensajes = await this.consultar(`01${pedidos.map(hex2).join('')}`, 0x01, 3000);
     const at = Date.now();
-    for (const [pid, datos] of recorrerAgrupado(payload)) {
-      const def = pidByNumber(pid);
-      const values = new Map<string, number | null>();
-      if (def) {
-        for (const param of def.params) values.set(param.id, param.decode(datos));
+    // Cada ECU contesta los PID que soporta; gana la primera (motor).
+    for (const m of mensajes) {
+      for (const [pid, datos] of recorrerAgrupado(m.data.slice(1))) {
+        if (readings.has(pid)) continue;
+        const def = pidByNumber(pid);
+        const values = new Map<string, number | null>();
+        if (def) {
+          for (const param of def.params) values.set(param.id, param.decode(datos));
+        }
+        readings.set(pid, { pid, values, raw: datos, at });
       }
-      readings.set(pid, { pid, values, raw: datos, at });
     }
     return { readings, missing: pedidos.filter((p) => !readings.has(p)) };
   }

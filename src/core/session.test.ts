@@ -17,9 +17,11 @@ async function open(profile = golf20_8v, warmSec = 200) {
 describe('sesión de diagnóstico', () => {
   it('informa cada fase del arranque', async () => {
     const { progress } = await open();
-    expect(progress.map((p) => p.phase)).toEqual([
-      'abriendo-enlace', 'inicializando', 'identificando', 'listo',
-    ]);
+    // Cada fase puede informar varios pasos; el orden de fases es fijo.
+    const fases = progress.map((p) => p.phase).filter((f, i, a) => a[i - 1] !== f);
+    expect(fases).toEqual(['abriendo-enlace', 'inicializando', 'identificando', 'listo']);
+    expect(progress.some((p) => /VIN/.test(p.detail))).toBe(true);
+    expect(progress.some((p) => /parámetros soportados/.test(p.detail))).toBe(true);
   });
 
   it('deja la sesión con protocolo, identificación y PID descubiertos', async () => {
@@ -35,11 +37,18 @@ describe('sesión de diagnóstico', () => {
     expect(gas.info.fuel).toBe('gasolina');
   });
 
-  it('deja el combustible en null si la ECU no lo expone', async () => {
-    // El perfil diésel no declara el PID 0x51.
+  it('sin el PID 0x51, deduce diésel del tipo de encendido de los monitores', async () => {
     const dsl = await open(tdi20_dpf);
     expect(dsl.info.supportedPids.has(0x51)).toBe(false);
-    expect(dsl.info.fuel).toBeNull();
+    expect(dsl.info.fuel).toBe('diesel');
+  });
+
+  it('identifica las unidades del bus y decodifica el VIN', async () => {
+    const { info } = await open(tdi20_dpf, 5);
+    expect(info.ecus.map((e) => e.ecu)).toEqual(['7E8']);
+    expect(info.ecus[0]?.cvns).toHaveLength(1);
+    expect(info.vinInfo?.manufacturer).toBe('Volkswagen');
+    expect(info.vinInfo?.modelYear).toBe(2010);
   });
 
   it('el sondeo devuelve los parámetros rápidos en cada vuelta', async () => {

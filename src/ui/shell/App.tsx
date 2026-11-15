@@ -1,8 +1,10 @@
 import { type Screen, useApp } from '@/state/store';
 import { Connect } from '../screens/Connect';
 import { Dashboard } from '../screens/Dashboard';
+import { Computadora } from '../screens/Computadora';
 import { Dtcs } from '../screens/Dtcs';
 import { LiveData } from '../screens/LiveData';
+import { Emisiones } from '../screens/Emisiones';
 import { Features } from '../screens/Features';
 import { Informe } from '../screens/Informe';
 import { Historial } from '../screens/Historial';
@@ -12,12 +14,13 @@ import { LinkDot } from '../parts/Status';
 /**
  * Armazón de la aplicación.
  *
- * En pantalla ancha: barra lateral fija más área de diagnóstico, que es la
- * ergonomía de un equipo de taller. En teléfono: barra inferior, porque es
- * donde llega el pulgar con el celular en una mano y la otra en el motor.
+ * En pantalla ancha: barra lateral con las pantallas agrupadas por tarea
+ * (diagnóstico, trabajo, herramientas) y una ficha del vehículo siempre a la
+ * vista. En teléfono: barra inferior que se desliza, porque diez pantallas
+ * no entran a lo ancho y achicarlas las vuelve imposibles de tocar con
+ * guantes.
  *
- * El cambio es por CSS puro, sin JavaScript midiendo el viewport: así no hay
- * salto al cargar ni relayout al rotar la tablet.
+ * El cambio de disposición es CSS puro, sin medir el viewport en JavaScript.
  */
 
 interface NavItem {
@@ -26,100 +29,66 @@ interface NavItem {
   short: string;
   /** Requiere conexión activa. */
   live: boolean;
+  grupo: 'Vehículo' | 'Diagnóstico' | 'Trabajo' | 'Herramientas';
 }
 
 const NAV: NavItem[] = [
-  { id: 'conexion', label: 'Conexión', short: 'Conex.', live: false },
-  { id: 'resumen', label: 'Resumen', short: 'Resumen', live: true },
-  { id: 'codigos', label: 'Códigos de falla', short: 'Códigos', live: true },
-  { id: 'datos', label: 'Datos en vivo', short: 'Datos', live: true },
-  { id: 'funciones', label: 'Funciones', short: 'Func.', live: true },
-  { id: 'informe', label: 'Informe', short: 'Informe', live: false },
-  { id: 'historial', label: 'Historial', short: 'Hist.', live: false },
-  { id: 'terminal', label: 'Terminal', short: 'Term.', live: false },
+  { id: 'conexion', label: 'Conexión', short: 'Conexión', live: false, grupo: 'Vehículo' },
+  { id: 'resumen', label: 'Resumen', short: 'Resumen', live: true, grupo: 'Vehículo' },
+  { id: 'computadora', label: 'Computadora', short: 'ECU', live: true, grupo: 'Vehículo' },
+  { id: 'codigos', label: 'Códigos de falla', short: 'Códigos', live: true, grupo: 'Diagnóstico' },
+  { id: 'datos', label: 'Datos en vivo', short: 'Datos', live: true, grupo: 'Diagnóstico' },
+  { id: 'emisiones', label: 'Emisiones', short: 'Emisiones', live: true, grupo: 'Diagnóstico' },
+  { id: 'funciones', label: 'Funciones', short: 'Funciones', live: true, grupo: 'Trabajo' },
+  { id: 'informe', label: 'Informe', short: 'Informe', live: false, grupo: 'Trabajo' },
+  { id: 'historial', label: 'Historial', short: 'Historial', live: false, grupo: 'Trabajo' },
+  { id: 'terminal', label: 'Terminal', short: 'Terminal', live: false, grupo: 'Herramientas' },
 ];
 
 export function App() {
-  const { screen, setScreen, info, mode, setMode, progress, polling, paused } = useApp();
+  const {
+    screen, setScreen, info, mode, setMode, progress, polling, paused, dtcs, manual, ocupado,
+  } = useApp();
   const connected = info !== null;
 
-  const effective: Screen = !connected && screen !== 'conexion' && screen !== 'terminal'
-    ? 'conexion'
-    : screen;
+  const libres: Screen[] = ['conexion', 'terminal', 'informe', 'historial'];
+  const effective: Screen = !connected && !libres.includes(screen) ? 'conexion' : screen;
+
+  const confirmados = dtcs.filter((d) => d.kind === 'stored').length;
+  const vehiculo = [
+    manual.make ?? info?.vinInfo?.manufacturer,
+    manual.model,
+    manual.year ?? info?.vinInfo?.modelYear,
+  ].filter(Boolean).join(' ');
 
   return (
-    <div
-      style={{
-        display: 'grid',
-        height: '100%',
-        gridTemplateAreas: '"head" "main" "nav"',
-        gridTemplateRows: 'auto minmax(0,1fr) auto',
-        // minmax(0,1fr) y no 1fr: el mínimo implícito 'auto' es el ancho de
-        // max-content, así que una línea larga en el encabezado ensancharía
-        // toda la grilla y provocaría scroll horizontal en el teléfono.
-        gridTemplateColumns: 'minmax(0,1fr)',
-      }}
-      data-wide="false"
-    >
-      <style>{WIDE_LAYOUT}</style>
+    <div className="shell">
+      <style>{LAYOUT}</style>
 
-      <header
-        style={{
-          gridArea: 'head',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          padding: '8px 12px',
-          borderBottom: '1px solid var(--color-line)',
-          background: 'var(--color-panel)',
-          minHeight: 44,
-          overflow: 'hidden',
-        }}
-      >
-        <span style={{
-          fontSize: 12, fontWeight: 700, letterSpacing: '0.1em',
-          textTransform: 'uppercase', whiteSpace: 'nowrap',
-        }}>
-          Escáner OBD
-        </span>
+      <header className="shell-head">
+        <span className="marca">Escáner OBD</span>
 
-        <span style={{
-          display: 'flex', alignItems: 'center', gap: 7,
-          flex: '1 1 auto', minWidth: 0, overflow: 'hidden',
-        }}>
+        <span className="estado">
           <LinkDot state={
-            connected ? (polling && !paused ? 'activa' : 'trabajando')
-            : progress.phase === 'error' ? 'error' : 'inactiva'
+            connected ? (ocupado !== null ? 'trabajando' : polling && !paused ? 'activa' : 'trabajando')
+            : progress.phase === 'error' ? 'error'
+            : progress.phase === 'desconectado' ? 'inactiva' : 'trabajando'
           } />
-          <span className="num" style={{
-            fontSize: 11, color: 'var(--color-ink-dim)',
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>
+          <span className="num estado-texto">
             {connected
               ? `${info.protocol?.name ?? 'protocolo desconocido'}${
                   info.voltage !== null ? ` · ${info.voltage.toFixed(1)} V` : ''}${
-                  paused ? ' · PAUSADO' : ''}`
+                  ocupado !== null ? ' · OCUPADO' : paused ? ' · PAUSADO' : ''}`
               : progress.detail}
           </span>
         </span>
 
-        <div style={{ display: 'flex', gap: 2, flex: '0 0 auto' }}>
+        <div className="modo">
           {(['simple', 'tecnico'] as const).map((m) => (
             <button
               key={m}
               onClick={() => setMode(m)}
-              style={{
-                padding: '4px 10px',
-                fontSize: 10,
-                fontWeight: 600,
-                letterSpacing: '0.07em',
-                textTransform: 'uppercase',
-                border: '1px solid',
-                borderColor: mode === m ? '#2d5a76' : 'var(--color-line)',
-                background: mode === m ? '#1d3a4d' : 'transparent',
-                color: mode === m ? '#cfe6f5' : 'var(--color-ink-faint)',
-                borderRadius: 3,
-              }}
+              className={mode === m ? 'modo-btn on' : 'modo-btn'}
             >
               {m === 'simple' ? 'Simple' : 'Técnico'}
             </button>
@@ -127,61 +96,49 @@ export function App() {
         </div>
       </header>
 
-      <nav
-        id="nav"
-        style={{
-          gridArea: 'nav',
-          display: 'flex',
-          borderTop: '1px solid var(--color-line)',
-          background: 'var(--color-panel)',
-          paddingBottom: 'env(safe-area-inset-bottom)',
-        }}
-      >
-        {NAV.map((item) => {
+      <nav id="nav" className="shell-nav">
+        {connected && (
+          <div className="ficha">
+            <div className="ficha-nombre">{vehiculo || 'Vehículo conectado'}</div>
+            {info.identity.vin !== null && (
+              <div className="num ficha-dato">{info.identity.vin}</div>
+            )}
+            {info.identity.ecuName !== null && (
+              <div className="num ficha-dato">{info.identity.ecuName}</div>
+            )}
+          </div>
+        )}
+        {NAV.map((item, i) => {
           const disabled = item.live && !connected;
           const on = effective === item.id;
+          const primeroDelGrupo = NAV[i - 1]?.grupo !== item.grupo;
           return (
-            <button
-              key={item.id}
-              onClick={() => !disabled && setScreen(item.id)}
-              disabled={disabled}
-              data-nav
-              style={{
-                flex: 1,
-                padding: '8px 4px',
-                background: on ? 'var(--color-panel-alt)' : 'transparent',
-                border: 0,
-                borderTop: `2px solid ${on ? 'var(--color-info)' : 'transparent'}`,
-                color: disabled ? 'var(--color-ink-faint)'
-                  : on ? 'var(--color-ink)' : 'var(--color-ink-dim)',
-                fontSize: 10.5,
-                fontWeight: 600,
-                letterSpacing: '0.05em',
-                textTransform: 'uppercase',
-                opacity: disabled ? 0.4 : 1,
-              }}
-            >
-              <span data-short>{item.short}</span>
-              <span data-long style={{ display: 'none' }}>{item.label}</span>
-            </button>
+            <div key={item.id} className="nav-celda">
+              {primeroDelGrupo && <div className="nav-grupo label">{item.grupo}</div>}
+              <button
+                onClick={() => !disabled && setScreen(item.id)}
+                disabled={disabled}
+                className={on ? 'nav-btn on' : 'nav-btn'}
+                aria-current={on ? 'page' : undefined}
+              >
+                <span className="nav-short">{item.short}</span>
+                <span className="nav-long">{item.label}</span>
+                {item.id === 'codigos' && connected && confirmados > 0 && (
+                  <span className="num nav-badge">{confirmados}</span>
+                )}
+              </button>
+            </div>
           );
         })}
       </nav>
 
-      <main
-        style={{
-          gridArea: 'main',
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          minWidth: 0,
-          padding: 12,
-          WebkitOverflowScrolling: 'touch',
-        }}
-      >
+      <main className="shell-main">
         {effective === 'conexion' && <Connect />}
         {effective === 'resumen' && <Dashboard />}
+        {effective === 'computadora' && <Computadora />}
         {effective === 'codigos' && <Dtcs />}
         {effective === 'datos' && <LiveData />}
+        {effective === 'emisiones' && <Emisiones />}
         {effective === 'funciones' && <Features />}
         {effective === 'informe' && <Informe />}
         {effective === 'historial' && <Historial />}
@@ -191,36 +148,82 @@ export function App() {
   );
 }
 
-/**
- * En pantalla ancha la navegación pasa a ser una columna a la izquierda.
- * Se hace con una media query sobre grid-template-areas: una sola regla
- * reubica la barra sin que ningún componente sepa en qué tamaño está.
- */
-const WIDE_LAYOUT = `
+const LAYOUT = `
+.shell {
+  display: grid;
+  height: 100%;
+  grid-template-areas: "head" "main" "nav";
+  grid-template-rows: auto minmax(0,1fr) auto;
+  /* minmax(0,1fr): con 1fr a secas, una línea larga ensancha toda la grilla. */
+  grid-template-columns: minmax(0,1fr);
+}
+.shell-head {
+  grid-area: head; display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px; min-height: 44px; overflow: hidden;
+  border-bottom: 1px solid var(--color-line); background: var(--color-panel);
+}
+.marca { font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+.estado { display: flex; align-items: center; gap: 7px; flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.estado-texto { font-size: 11px; color: var(--color-ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modo { display: flex; gap: 2px; flex: 0 0 auto; }
+.modo-btn {
+  padding: 4px 10px; font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase;
+  border: 1px solid var(--color-line); background: transparent; color: var(--color-ink-faint); border-radius: 3px;
+}
+.modo-btn.on { border-color: var(--color-accent-line); background: var(--color-accent-bg); color: var(--color-accent-ink); }
+
+.shell-main { grid-area: main; overflow-y: auto; overflow-x: hidden; min-width: 0; padding: 12px; -webkit-overflow-scrolling: touch; }
+
+/* Teléfono: barra inferior deslizable. */
+.shell-nav {
+  grid-area: nav; display: flex; overflow-x: auto; scrollbar-width: none;
+  border-top: 1px solid var(--color-line); background: var(--color-panel);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.shell-nav::-webkit-scrollbar { display: none; }
+.ficha, .nav-grupo { display: none; }
+.nav-celda { flex: 0 0 auto; display: flex; }
+.nav-btn {
+  position: relative; min-width: 76px; padding: 11px 12px 10px; background: transparent; border: 0;
+  border-top: 2px solid transparent; color: var(--color-ink-dim);
+  font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap;
+}
+.nav-btn.on { background: var(--color-panel-alt); border-top-color: var(--color-info); color: var(--color-ink); }
+.nav-btn:disabled { opacity: .35; }
+.nav-long { display: none; }
+.nav-badge {
+  margin-left: 6px; padding: 0 5px; border-radius: 8px; font-size: 10px;
+  background: var(--color-fail); color: #fff;
+}
+
+/* Pantalla ancha: barra lateral agrupada, con la ficha del vehículo. */
 @media (min-width: 860px) {
-  [data-wide] {
-    grid-template-areas: "head head" "nav main" !important;
-    grid-template-columns: 196px minmax(0,1fr) !important;
-    grid-template-rows: auto minmax(0,1fr) !important;
+  .shell {
+    grid-template-areas: "head head" "nav main";
+    grid-template-columns: 208px minmax(0,1fr);
+    grid-template-rows: auto minmax(0,1fr);
   }
-  #nav {
-    flex-direction: column;
-    border-top: 0 !important;
-    border-right: 1px solid var(--color-line);
-    align-items: stretch;
-    padding-bottom: 0 !important;
+  .shell-nav {
+    flex-direction: column; overflow-x: hidden; overflow-y: auto;
+    border-top: 0; border-right: 1px solid var(--color-line); padding-bottom: 12px;
   }
-  #nav button[data-nav] {
-    /* El estilo inline flex:1, que la barra inferior necesita, le gana a
-       esta regla sin !important y deja botones de 143 px de alto. */
-    flex: 0 0 auto !important;
-    text-align: left;
-    padding: 9px 14px !important;
-    border-top: 0 !important;
-    border-left: 2px solid transparent;
+  .ficha {
+    display: block; padding: 12px 14px; border-bottom: 1px solid var(--color-line);
+    background: var(--color-panel-alt);
   }
-  #nav [data-short] { display: none !important; }
-  #nav [data-long] { display: inline !important; }
-  main { padding: 14px !important; }
+  .ficha-nombre { font-size: 13px; font-weight: 600; }
+  .ficha-dato { font-size: 10.5px; color: var(--color-ink-dim); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nav-celda { display: block; }
+  .nav-grupo { display: block; padding: 14px 14px 4px; }
+  .nav-btn {
+    display: flex; align-items: center; width: 100%; min-width: 0; text-align: left;
+    padding: 8px 14px; border-top: 0; border-left: 2px solid transparent;
+    font-size: 11.5px;
+  }
+  .nav-btn.on { border-left-color: var(--color-info); }
+  .nav-btn:hover:not(:disabled):not(.on) { background: var(--color-panel-alt); color: var(--color-ink); }
+  .nav-short { display: none; }
+  .nav-long { display: inline; flex: 1; }
+  .shell-main { padding: 16px 18px; }
 }
 `;

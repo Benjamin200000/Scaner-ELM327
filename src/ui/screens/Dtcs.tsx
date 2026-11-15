@@ -3,6 +3,7 @@ import { useApp } from '@/state/store';
 import { dtcArea, dtcKindLabel } from '@/core/obd2/dtc';
 import { findDtcFor } from '@/knowledge';
 import { PID_DEFS } from '@/core/obd2/pids';
+import { describeEcu } from '@/core/elm327/frames';
 import { SOURCE_LABEL } from '@/knowledge/types';
 import { Button, Notice, Panel } from '../parts/Panel';
 
@@ -83,13 +84,18 @@ export function Dtcs() {
               {items.map((d) => {
                 const k = findDtcFor(d.code, ctx);
                 return (
-                  <div key={`${d.code}-${kind}`} style={{
+                  <div key={`${d.code}-${kind}-${d.ecu ?? ''}`} style={{
                     borderBottom: '1px solid var(--color-line-soft)', padding: '10px 12px',
                   }}>
                     <div style={{
                       display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap',
                     }}>
                       <span className="num" style={{ fontSize: 20 }}>{d.code}</span>
+                      {d.ecu !== undefined && (
+                        <span className="label" style={{ color: 'var(--color-info)' }}>
+                          {describeEcu(d.ecu)}
+                        </span>
+                      )}
                       {k !== null ? (
                         <>
                           <span className="label" style={{

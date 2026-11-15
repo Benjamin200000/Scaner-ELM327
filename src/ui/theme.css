@@ -35,6 +35,11 @@
   --color-info: #3d80a8;
   --color-idle: #5a636c;
 
+  /* Acento de selección: azul acero, el único color que no es de estado. */
+  --color-accent-bg: #1d3a4d;
+  --color-accent-line: #2d5a76;
+  --color-accent-ink: #cfe6f5;
+
   --font-ui: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-num: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', Menlo, monospace;
 
@@ -90,6 +95,28 @@ body {
   padding: 7px 10px;
   border-bottom: 1px solid var(--color-line);
   background: var(--color-panel-alt);
+}
+
+/* Las filas clicables avisan que lo son. */
+button.row:hover:not(:disabled) { background: var(--color-panel-alt); }
+
+/* Indicador grande: el valor que hay que leer desde lejos. */
+.tile {
+  padding: 10px 12px 9px;
+  border-right: 1px solid var(--color-line-soft);
+  border-bottom: 1px solid var(--color-line-soft);
+  min-width: 0;
+}
+.tile-valor { font-size: 30px; line-height: 1.05; letter-spacing: -0.02em; }
+.tile-unidad { font-size: 11px; color: var(--color-ink-faint); margin-left: 4px; }
+@media (min-width: 860px) { .tile-valor { font-size: 36px; } }
+
+/* Mini gráfico de tendencia bajo cada indicador. */
+.spark { display: block; width: 100%; height: 22px; margin-top: 4px; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
 }
 
 /* Fila de datos. Densa: el objetivo es ver muchas de un vistazo. */

@@ -14,6 +14,7 @@ import { EventEmitter } from 'node:events';
 export class ElmStub extends EventEmitter {
   #buffer = '';
   #eco = true;
+  #headers = false;
   #t0 = Date.now();
 
   write(bytes) {
@@ -45,11 +46,21 @@ export class ElmStub extends EventEmitter {
     }
     if (cmd === 'ATE0') { this.#eco = false; return 'OK'; }
     if (cmd === 'ATE1') { this.#eco = true; return 'OK'; }
+    if (cmd === 'ATH1') { this.#headers = true; return 'OK'; }
+    if (cmd === 'ATH0') { this.#headers = false; return 'OK'; }
     if (cmd === 'ATRV') return '12.4V';
     if (cmd === 'ATDPN') return 'A6';
     if (cmd === 'ATDP') return 'AUTO, ISO 15765-4 (CAN 11/500)';
     if (/^AT/.test(cmd)) return 'OK';
 
+    const datos = this.#obd(cmd);
+    if (datos === 'NO DATA' || !this.#headers) return datos;
+    // Con cabeceras: identificador CAN y byte de largo, como el chip real.
+    const n = datos.split(' ').length;
+    return `7E8 ${hex(n)} ${datos}`;
+  }
+
+  #obd(cmd) {
     const seg = (Date.now() - this.#t0) / 1000;
     switch (cmd) {
       case '0100': return '41 00 BE 3E B8 11';

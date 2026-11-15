@@ -42,6 +42,16 @@ export interface SimDtc {
   kind: 'stored' | 'pending' | 'permanent';
 }
 
+/** Un resultado de prueba del modo 06: valor medido contra sus límites. */
+export interface SimTest {
+  mid: number;
+  tid: number;
+  uas: number;
+  value: number;
+  min: number;
+  max: number;
+}
+
 export interface SimProfile {
   id: string;
   label: string;
@@ -60,6 +70,20 @@ export interface SimProfile {
    * El byte A lo arma el simulador según los códigos almacenados.
    */
   readiness: [number, number, number];
+  /** Número de verificación de calibración (modo 09 PID 06), 4 bytes. */
+  cvn?: [number, number, number, number];
+  /** Identificadores UDS (servicio 0x22) que la ECU contesta: DID -> texto. */
+  uds?: Record<string, string>;
+  /** Resultados de autodiagnóstico del modo 06. */
+  mode06?: SimTest[];
+  /** Segunda unidad que también contesta en el bus (transmisión). */
+  segunda?: {
+    ecuName: string;
+    calId: string;
+    dtcs: SimDtc[];
+    supportedPids: string[];
+    uds?: Record<string, string>;
+  };
   /** Evoluciona el estado del motor un paso de `dt` segundos. */
   step(state: SimEngineState, dt: number): void;
   initial(): SimEngineState;
@@ -116,7 +140,7 @@ export const golf20_8v: SimProfile = {
   protocolName: 'ISO 14230-4 KWP (fast init, 10.4 kbaud)',
   vin: 'WVWZZZ1JZ9W123456',
   ecuName: 'ECM-EngineControl',
-  calId: '06A906032HK 2.0l R4/2V ME7.5',
+  calId: '06A906032HK 0005',
   dtcs: [{ code: 'P0171', kind: 'stored' }],
   supportedPids: [
     '01', '03', '04', '05', '06', '07', '0B', '0C', '0D', '0E',
@@ -126,6 +150,7 @@ export const golf20_8v: SimProfile = {
   // Encendido por chispa (bit 3 de B en 0), continuos soportados y
   // completos, y los no continuos del lado gasolina todos completos.
   readiness: [0x07, 0xe5, 0x00],
+  cvn: [0x5e, 0x10, 0x7b, 0x92],
   initial: () => baseState({ coolantC: 19, iatC: 19 }),
   step(s, dt) {
     s.t += dt;
@@ -158,7 +183,7 @@ export const tdi20_dpf: SimProfile = {
   protocolName: 'ISO 15765-4 CAN (11 bit, 500 kbaud)',
   vin: 'WVWZZZ1KZAW654321',
   ecuName: 'EDC17CP14',
-  calId: '03L906018NQ 2.0l TDI EDC17',
+  calId: '03L906018NQ 9977',
   dtcs: [
     { code: 'P2002', kind: 'stored' },
     { code: 'P0234', kind: 'pending' },
@@ -172,6 +197,25 @@ export const tdi20_dpf: SimProfile = {
   // partículas queda pendiente, que es lo típico tras una regeneración
   // interrumpida o un borrado reciente.
   readiness: [0x0f, 0x6b, 0x40],
+  cvn: [0x8a, 0x3f, 0x21, 0xc4],
+  uds: {
+    F190: 'WVWZZZ1KZAW654321',
+    F187: '03L906018NQ',
+    F189: '9977',
+    F191: '03L907309AE',
+    F197: 'R4 2.0l TDI',
+    F18C: '0281017946',
+  },
+  mode06: [
+    // Filtro de partículas: valor por encima del máximo, prueba fallida.
+    { mid: 0xb2, tid: 0x8a, uas: 0x17, value: 0x0e10, min: 0x0000, max: 0x0bb8 },
+    // Sensor de gases de escape: dentro de límites.
+    { mid: 0x01, tid: 0x81, uas: 0x0a, value: 0x0456, min: 0x0200, max: 0x0800 },
+    // Presión de sobrealimentación: cerca del límite superior.
+    { mid: 0x85, tid: 0x90, uas: 0x17, value: 0x0780, min: 0x0100, max: 0x0800 },
+    // EGR: dentro de límites.
+    { mid: 0x31, tid: 0x84, uas: 0x01, value: 0x0064, min: 0x0020, max: 0x00c8 },
+  ],
   initial: () => baseState({
     coolantC: 21,
     iatC: 21,
@@ -206,7 +250,25 @@ export const tdi20_dpf: SimProfile = {
   },
 };
 
-export const PROFILES: SimProfile[] = [golf20_8v, tdi20_dpf];
+/**
+ * El mismo diésel con caja automática: dos unidades contestan en el bus.
+ * Sirve para ejercitar la separación por ECU, que es donde un parser
+ * ingenuo mezcla respuestas y fabrica datos.
+ */
+export const tdi20_dsg: SimProfile = {
+  ...tdi20_dpf,
+  id: 'tdi-2.0-dsg',
+  label: 'VW 2.0 TDI con caja DSG · dos ECU en el bus',
+  segunda: {
+    ecuName: 'TCM-DSG 02E',
+    calId: '02E300058P 1305',
+    dtcs: [{ code: 'P0715', kind: 'stored' }],
+    supportedPids: ['0C', '0D'],
+    uds: { F187: '02E927770AL', F189: '1305', F197: 'GSG DSG AG6' },
+  },
+};
+
+export const PROFILES: SimProfile[] = [golf20_8v, tdi20_dpf, tdi20_dsg];
 
 export const profileById = (id: string): SimProfile =>
   PROFILES.find((p) => p.id === id) ?? golf20_8v;

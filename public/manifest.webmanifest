@@ -1,0 +1,15 @@
+{
+  "name": "Escáner OBD",
+  "short_name": "Escáner OBD",
+  "description": "Diagnóstico automotriz OBD-II con adaptadores ELM327",
+  "lang": "es",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d0f11",
+  "theme_color": "#15181c",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
