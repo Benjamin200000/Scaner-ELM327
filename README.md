@@ -24,6 +24,10 @@ un escenario gasolina y uno diésel con DPF saturado y overboost.
 Hay tres límites que no son del código y que conviene conocer antes de
 comprar un adaptador o prometerle algo a un cliente.
 
+> **Hay un agente local** que levanta casi todos estos límites: ver
+> [`agent/README.md`](agent/README.md). Lo de abajo describe qué puede y qué
+> no puede hacer el navegador **por sí solo**.
+
 ### 1. La mayoría de los ELM327 Bluetooth NO funcionan desde el navegador
 
 Los adaptadores Bluetooth baratos y más comunes son **Bluetooth Classic** y
@@ -42,12 +46,12 @@ Ni Web Serial ni Web Bluetooth existen en iOS o iPadOS, y tampoco en Safari
 de escritorio ni en Firefox. En iPhone y iPad la app abre y navega, pero no
 se puede conectar a un adaptador.
 
-| Plataforma | USB (Web Serial) | BLE (Web Bluetooth) |
-|---|---|---|
-| Chrome / Edge escritorio | Sí | Sí |
-| Chrome Android | No | Sí |
-| Firefox, Safari | No | No |
-| iOS / iPadOS | No | No |
+| Plataforma | USB (Web Serial) | BLE (Web Bluetooth) | Con agente local |
+|---|---|---|---|
+| Chrome / Edge escritorio | Sí | Sí | Todo |
+| Chrome Android | No | Sí | Todo, contra la notebook |
+| Firefox, Safari | No | No | Todo, contra la notebook |
+| iOS / iPadOS | No | No | Todo, contra la notebook |
 
 La pantalla de conexión muestra las opciones no disponibles deshabilitadas y
 con el motivo, en lugar de esconderlas: así queda claro que el límite lo pone

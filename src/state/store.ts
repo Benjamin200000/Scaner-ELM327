@@ -3,6 +3,7 @@ import { DiagnosticSession, type SessionInfo, type SessionProgress } from '@/cor
 import { MockTransport } from '@/core/transport/mock';
 import { WebSerialTransport } from '@/core/transport/webserial';
 import { WebBluetoothTransport } from '@/core/transport/webbluetooth';
+import { AgentTransport, type AgentInterface } from '@/core/transport/agent';
 import type { Transport, TransportKind } from '@/core/transport/types';
 import { TransportError } from '@/core/transport/types';
 import { ElmError } from '@/core/elm327/errors';
@@ -68,6 +69,14 @@ interface AppState {
   simProfileId: string;
   forcedProtocol: string;
 
+  /** Agente local: dirección, token e interfaces que ofrece. */
+  agentUrl: string;
+  agentToken: string;
+  agentInterfaces: AgentInterface[];
+  agentInterfaceId: string;
+  agentBusy: boolean;
+  agentVersion: string | null;
+
   /** Rutina de servicio en curso o terminada. */
   routineRun: RunResult | null;
   routineOutcomes: StepOutcome[];
@@ -83,6 +92,10 @@ interface AppState {
   setDebug(on: boolean): void;
   setPaused(on: boolean): void;
   setAdvanced(on: boolean): void;
+  setAgentUrl(url: string): void;
+  setAgentToken(token: string): void;
+  setAgentInterfaceId(id: string): void;
+  probeAgent(): Promise<void>;
   runRoutine(routineId: string, mode: RunMode): Promise<void>;
   cancelRoutine(): void;
   clearRoutineRun(): void;
@@ -105,7 +118,17 @@ interface AppState {
 
 const emptyProgress: SessionProgress = { phase: 'desconectado', detail: 'Sin conexión' };
 
-function makeTransport(kind: TransportKind, simProfileId: string): Transport {
+interface AgentConfig {
+  url: string;
+  token: string;
+  interfaceId: string;
+}
+
+function makeTransport(
+  kind: TransportKind,
+  simProfileId: string,
+  agent: AgentConfig,
+): Transport {
   switch (kind) {
     case 'webserial':
       return new WebSerialTransport({ baudRate: 38400 });
@@ -113,8 +136,35 @@ function makeTransport(kind: TransportKind, simProfileId: string): Transport {
       return new WebBluetoothTransport();
     case 'mock':
       return new MockTransport({ profile: profileById(simProfileId) });
+    case 'websocket':
+      if (agent.interfaceId === '') {
+        throw new TransportError('open-failed',
+          'Hay que elegir una interfaz del agente antes de conectar');
+      }
+      return new AgentTransport({
+        url: agent.url,
+        token: agent.token,
+        interfaceId: agent.interfaceId,
+      });
     default:
       throw new TransportError('not-supported', `Transporte no implementado: ${kind}`);
+  }
+}
+
+/** localStorage puede fallar o venir vacío; nada de esto es crítico. */
+function leer(clave: string): string | null {
+  try {
+    return localStorage.getItem(`scaner.${clave}`);
+  } catch {
+    return null;
+  }
+}
+
+function guardar(clave: string, valor: string): void {
+  try {
+    localStorage.setItem(`scaner.${clave}`, valor);
+  } catch {
+    // Ventana privada o almacenamiento bloqueado: se sigue igual.
   }
 }
 
@@ -146,6 +196,13 @@ export const useApp = create<AppState>((set, get) => ({
   routineBusy: false,
   advanced: false,
 
+  agentUrl: leer('agentUrl') ?? 'ws://127.0.0.1:8777',
+  agentToken: leer('agentToken') ?? '',
+  agentInterfaces: [],
+  agentInterfaceId: '',
+  agentBusy: false,
+  agentVersion: null,
+
   setScreen: (screen) => set({ screen }),
   setMode: (mode) => set({ mode }),
   setManual: (m) => set((s) => ({ manual: { ...s.manual, ...m } })),
@@ -154,6 +211,38 @@ export const useApp = create<AppState>((set, get) => ({
   setDebug: (debug) => set({ debug }),
   setPaused: (paused) => set({ paused }),
   setAdvanced: (advanced) => set({ advanced }),
+  setAgentUrl: (agentUrl) => { guardar('agentUrl', agentUrl); set({ agentUrl }); },
+  setAgentToken: (agentToken) => { guardar('agentToken', agentToken); set({ agentToken }); },
+  setAgentInterfaceId: (agentInterfaceId) => set({ agentInterfaceId }),
+
+  /**
+   * Consulta al agente qué interfaces tiene, sin abrir ninguna.
+   *
+   * Es un paso aparte de conectar porque el usuario no sabe de antemano en
+   * qué COM quedó su adaptador Bluetooth: primero hay que poder mirar.
+   */
+  async probeAgent() {
+    const { agentUrl, agentToken } = get();
+    set({ agentBusy: true, fault: null });
+    const probe = new AgentTransport({ url: agentUrl, token: agentToken });
+    try {
+      const { interfaces, features } = await probe.connect();
+      const usable = interfaces.filter((i) => i.kind !== 'error');
+      set({
+        agentInterfaces: interfaces,
+        agentInterfaceId: get().agentInterfaceId !== ''
+          && interfaces.some((i) => i.id === get().agentInterfaceId)
+          ? get().agentInterfaceId
+          : usable[0]?.id ?? '',
+        agentVersion: features.simulador === true ? 'con simulador' : 'conectado',
+      });
+    } catch (err) {
+      set({ fault: toFault(err), agentInterfaces: [], agentVersion: null });
+    } finally {
+      await probe.close().catch(() => {});
+      set({ agentBusy: false });
+    }
+  },
   clearFault: () => set({ fault: null }),
   clearRoutineRun: () => set({ routineRun: null, routineOutcomes: [] }),
   cancelRoutine: () => { cancelRequested = true; },
@@ -260,10 +349,18 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async connect(kind) {
-    const { simProfileId, forcedProtocol, manual } = get();
+    const { simProfileId, forcedProtocol, manual, agentUrl, agentToken, agentInterfaceId } = get();
     set({ fault: null, values: new Map(), series: new Map(), dtcs: [], trace: [] });
 
-    const transport = makeTransport(kind, simProfileId);
+    let transport: Transport;
+    try {
+      transport = makeTransport(kind, simProfileId, {
+        url: agentUrl, token: agentToken, interfaceId: agentInterfaceId,
+      });
+    } catch (err) {
+      set({ fault: toFault(err), progress: { phase: 'error', detail: 'No se pudo conectar' } });
+      return;
+    }
     const session = new DiagnosticSession(transport, (progress) => set({ progress }));
     set({ session });
 
