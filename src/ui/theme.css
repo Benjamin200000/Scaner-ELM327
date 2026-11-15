@@ -1,0 +1,133 @@
+@import 'tailwindcss';
+
+/*
+ * Lenguaje visual.
+ *
+ * El objetivo es que parezca un instrumento, no una página. Las decisiones
+ * concretas que lo sostienen:
+ *
+ *  - Gris muy oscuro, no negro puro: el negro puro con texto blanco vibra y
+ *    cansa en una jornada larga.
+ *  - Sin gradientes y sin sombras más allá de una línea de 1 px. La
+ *    jerarquía la dan el contraste y el espacio.
+ *  - Radios de 2-3 px. Las esquinas muy redondeadas leen como app de consumo.
+ *  - Color de estado desaturado. Un rojo neón al lado de un verde neón
+ *    compite con los números, que son lo que hay que leer.
+ *  - Números siempre en cifras tabulares, para que no bailen al actualizarse
+ *    diez veces por segundo.
+ */
+
+@theme {
+  --color-bg: #0d0f11;
+  --color-panel: #15181c;
+  --color-panel-alt: #1b1f24;
+  --color-line: #262b32;
+  --color-line-soft: #1f2429;
+
+  --color-ink: #e8ebee;
+  --color-ink-dim: #9aa3ac;
+  --color-ink-faint: #6b747d;
+
+  /* Estados. Desaturados a propósito. */
+  --color-ok: #4a9a5e;
+  --color-warn: #c2912f;
+  --color-fail: #c04a3d;
+  --color-info: #3d80a8;
+  --color-idle: #5a636c;
+
+  --font-ui: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-num: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Mono', Menlo, monospace;
+
+  --radius-panel: 3px;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* Cifras tabulares en todo lo que sea un valor medido. */
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  letter-spacing: -0.01em;
+}
+
+/* Etiqueta pequeña en mayúsculas. El patrón de los equipos de taller. */
+.label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+}
+
+.panel {
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-panel);
+}
+
+/* Barra superior de panel, con el título. */
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-panel-alt);
+}
+
+/* Fila de datos. Densa: el objetivo es ver muchas de un vistazo. */
+.row {
+  display: grid;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+.row:last-child { border-bottom: 0; }
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+button:disabled { cursor: not-allowed; }
+
+/* Foco visible y sobrio. Se usa con guantes y en pantallas con reflejo. */
+:focus-visible {
+  outline: 2px solid var(--color-info);
+  outline-offset: 1px;
+}
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: var(--color-bg); }
+::-webkit-scrollbar-thumb {
+  background: #2d343b;
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover { background: #3a424a; }
+
+/* El contenedor de uPlot hereda el tema. */
+.uplot, .u-wrap { font-family: var(--font-num) !important; }
+.u-legend { display: none !important; }
+
+@media print {
+  body { background: #fff; color: #000; }
+}

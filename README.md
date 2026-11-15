@@ -1,1 +1,182 @@
 # Scaner-ELM327
+
+Plataforma web de diagnóstico automotriz. Se conecta al vehículo mediante
+interfaces ELM327 y presenta lectura de parámetros, códigos de falla e
+interpretación asistida.
+
+Funciona en notebook, PC, tablet y teléfono, desde el navegador, sin
+instalación y sin backend.
+
+```bash
+npm install
+npm run dev        # http://localhost:5173
+npm test           # 88 tests
+npm run build
+```
+
+Sin hardware a mano, en la pantalla de conexión se elige **Simulador**: trae
+un escenario gasolina y uno diésel con DPF saturado y overboost.
+
+---
+
+## Lo que hay que saber antes de usarlo
+
+Hay tres límites que no son del código y que conviene conocer antes de
+comprar un adaptador o prometerle algo a un cliente.
+
+### 1. La mayoría de los ELM327 Bluetooth NO funcionan desde el navegador
+
+Los adaptadores Bluetooth baratos y más comunes son **Bluetooth Classic** y
+hablan SPP (Serial Port Profile). Web Bluetooth, la API del navegador,
+**solo soporta BLE/GATT**. Un adaptador SPP nunca va a aparecer en el
+selector, por mucho que esté emparejado con el sistema operativo.
+
+Desde el navegador funcionan solo los adaptadores **BLE**: Vgate iCar Pro
+BLE, Veepeak OBDCheck BLE, OBDLink CX y clones BLE. La app trae los perfiles
+GATT conocidos de esos adaptadores y los prueba en orden
+(`src/core/transport/webbluetooth.ts`).
+
+### 2. iOS no puede acceder al hardware desde ningún navegador
+
+Ni Web Serial ni Web Bluetooth existen en iOS o iPadOS, y tampoco en Safari
+de escritorio ni en Firefox. En iPhone y iPad la app abre y navega, pero no
+se puede conectar a un adaptador.
+
+| Plataforma | USB (Web Serial) | BLE (Web Bluetooth) |
+|---|---|---|
+| Chrome / Edge escritorio | Sí | Sí |
+| Chrome Android | No | Sí |
+| Firefox, Safari | No | No |
+| iOS / iPadOS | No | No |
+
+La pantalla de conexión muestra las opciones no disponibles deshabilitadas y
+con el motivo, en lugar de esconderlas: así queda claro que el límite lo pone
+el navegador y no la aplicación.
+
+### 3. Un ELM327 no es un equipo de diagnóstico de fabricante
+
+Es un conversor de protocolo. El bloque OBD-II genérico (códigos, datos en
+vivo, identificación) está garantizado por norma y **está implementado y
+probado**.
+
+Las funciones específicas de fabricante — adaptaciones, pruebas de
+actuadores, regeneración de DPF, bloques de medición, ajustes básicos — son
+alcanzables en principio sobre KWP2000 o CAN, pero dependen de cada ECU y de
+su nivel de acceso. **Están modeladas y evaluadas, pero no implementadas**:
+ejecutarlas requiere verificar cada secuencia contra una ECU real, y una
+secuencia equivocada en una adaptación o una regeneración puede dejar el
+vehículo peor que antes.
+
+Un caso concreto para VAG: los vehículos anteriores a ~2001 suelen usar
+**KW1281**, un protocolo por bloques con handshake byte a byte que el ELM327
+no puede hablar aunque la ECU esté sobre K-Line. Para esos hace falta una
+interfaz KKL o un equipo dedicado. La pantalla **Funciones** evalúa esto
+contra la conexión activa y lo informa.
+
+---
+
+## El principio que ordena todo el diseño
+
+**No inventar información.** No es una intención: está impuesto por los tipos
+de datos.
+
+- Toda búsqueda en la base de conocimiento devuelve `T | null`. No hay textos
+  de relleno. Un código desconocido se informa como tal.
+- Todo dato de referencia declara su `provenance` (norma, fabricante,
+  práctica de taller, medido) y la UI puede mostrarlo distinto.
+- Un parámetro sin rango fiable se muestra con su valor y estado
+  `SIN REFERENCIA`. No se inventa un rango plausible.
+- Un PID no soportado se muestra como `NO COMPATIBLE`, nunca como `0`.
+- Un rango cuyas condiciones no se cumplen (motor frío, vehículo en
+  movimiento) no se aplica: el estado es `FUERA DE CONDICIÓN`. Así un
+  arranque en frío no se marca como anomalía.
+- Las reglas de diagnóstico distinguen **dato anormal** de **diagnóstico
+  confirmado**. El nivel más alto que la app afirma es `PATRÓN COMPATIBLE`;
+  no existe un nivel "confirmado" y ninguna regla dice que una pieza esté
+  defectuosa.
+- Una regla que no se pudo evaluar se **informa** con qué le faltó. Que la
+  regla de DPF no haya corrido no significa que el DPF esté bien.
+
+Ejemplo de lo anterior funcionando: la regla que compara el caudal de aire
+medido contra el teórico necesita la cilindrada. Sin ese dato no corre, y lo
+dice, en lugar de comparar contra un número estimado al azar.
+
+---
+
+## Arquitectura
+
+```
+Interfaz (React)           src/ui/
+Estado                     src/state/
+Motor de diagnóstico       src/core/engine/     reglas, rangos, sistemas
+Base de conocimiento       src/knowledge/       DTC, rangos, procedencia
+Servicios                  src/core/obd2/       modos 01/03/04/07/09/0A
+                           src/core/kwp2000/    SID y NRC de ISO 14230
+Protocolo                  src/core/elm327/     driver, parser, errores
+Transporte                 src/core/transport/  Web Serial, BLE, simulador
+Vehículo
+```
+
+Cada capa solo conoce la de abajo. El transporte mueve bytes y no sabe qué es
+un ELM327; el driver habla ELM327 y no sabe qué es un PID; el motor de reglas
+no sabe si los datos vinieron de un auto o del simulador. Por eso se puede
+agregar J2534, WebUSB o un agente local sin tocar nada por encima.
+
+**La comunicación no depende de React.** Toda la lógica vive en `src/core/` y
+se prueba sin montar un DOM: los 88 tests corren en Node en ~2 segundos.
+
+### Decisiones que vale la pena conocer
+
+**Sin backend.** El acceso al hardware ocurre en el navegador, así que un
+servidor no podría tocar el vehículo. El historial va a IndexedDB y la app
+funciona sin conexión, que es lo que hace falta en un taller con mala señal.
+
+**El sondeo se reprograma con `setTimeout`, no con `setInterval`.** Un
+ELM327 sobre K-Line hace 8-12 solicitudes por segundo; con intervalo fijo se
+encolarían solicitudes sobre un adaptador ocupado. Los parámetros rápidos se
+piden en cada vuelta y los lentos rotan. Un PID que falla tres veces se
+descarta para no arruinar la frecuencia de refresco del resto.
+
+**Gráficos con uPlot sobre canvas.** Con SVG y re-render de React por punto,
+la interfaz se arrastra justo cuando más importa, que es mirando una
+aceleración.
+
+**Un PID puede entregar varios parámetros.** Los PID diésel ampliados (0x70,
+0x7A, 0x7C) traen un byte de máscara y después varios campos. Modelarlos como
+"un PID, un valor" obliga a parchear la UI después.
+
+---
+
+## Estado actual
+
+**Implementado y probado**
+
+- Transporte: Web Serial, Web Bluetooth BLE, simulador
+- Driver ELM327: cola serializada, framing por prompt, timeouts,
+  12 códigos de error distintos con consejo, detección de clones
+- Detección de protocolo y descubrimiento de PID soportados
+- OBD-II: modos 01, 03, 04, 07, 09, 0A
+- 40 parámetros decodificados, agrupados en 10 sistemas
+- Motor de reglas con 7 reglas y niveles de confianza
+- 11 códigos de falla interpretados con causas, pruebas y qué los descartaría
+- Interfaz: conexión, resumen, códigos, datos en vivo con gráficos
+  comparativos, funciones, terminal de debug
+- Historial en IndexedDB
+
+**Modelado pero no implementado**
+
+- Funciones de fabricante (ver límite 3). La matriz de compatibilidad está
+  en `src/core/capabilities.ts` y se muestra en la pantalla Funciones.
+- Bloques de medición de VAG, datos congelados (modo 02), informe en PDF
+
+**Cobertura honesta de la base de conocimiento**
+
+11 códigos de falla y 12 rangos de referencia. Hay miles de códigos genéricos
+y decenas de miles específicos de fabricante. La base crece agregando
+entradas con su procedencia declarada; agregar números plausibles pero no
+verificados rompería la garantía central del proyecto.
+
+Las escalas de los PID ampliados (0x70, 0x78, 0x7A, 0x7C) están marcadas
+`verified: false`: su layout varía entre fabricantes y no se pudo verificar
+contra norma ni contra una ECU real. La UI las muestra marcadas como tales en
+modo técnico.
