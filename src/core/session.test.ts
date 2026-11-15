@@ -140,3 +140,45 @@ describe('sesión de diagnóstico', () => {
     expect(transport.state).toBe('closed');
   });
 });
+
+describe('sondeo agrupado', () => {
+  it('detecta la capacidad al conectar: CAN sí, K-Line no', async () => {
+    const can = await open(tdi20_dpf, 10);
+    expect(can.info.agrupacion).toBe(true);
+
+    const kline = await open(golf20_8v, 10);
+    expect(kline.info.agrupacion).toBe(false);
+  });
+
+  it('lee el estado de los monitores al conectar', async () => {
+    const { info } = await open(tdi20_dpf, 10);
+    expect(info.readiness?.tipoEncendido).toBe('compresion');
+    expect(info.readiness?.raw).toHaveLength(4);
+  });
+
+  it('una vuelta agrupada usa muchas menos solicitudes', async () => {
+    const can = await open(tdi20_dpf, 10);
+    can.session.driver.clearTrace();
+    await can.session.poll();
+    const conAgrupacion = can.session.driver.getTrace()
+      .filter((t) => t.direction === 'tx').length;
+
+    const kline = await open(golf20_8v, 10);
+    kline.session.driver.clearTrace();
+    await kline.session.poll();
+    const sinAgrupacion = kline.session.driver.getTrace()
+      .filter((t) => t.direction === 'tx').length;
+
+    // Diez PID por vuelta: dos solicitudes agrupadas contra diez sueltas.
+    expect(conAgrupacion).toBeLessThanOrEqual(2);
+    expect(sinAgrupacion).toBeGreaterThanOrEqual(8);
+  });
+
+  it('los valores agrupados son los mismos que de a uno', async () => {
+    const { session } = await open(tdi20_dpf);
+    const r = await session.poll();
+    expect(r.values.get('rpm')).toBeGreaterThan(700);
+    expect(r.values.get('coolant')).toBeGreaterThan(80);
+    expect(r.values.get('maf')).toBeGreaterThan(10);
+  });
+});

@@ -4,6 +4,7 @@ import { type EvaluatedParam, STATUS_LABEL, STATUS_SEVERITY } from '@/core/engin
 import { LEVEL_LABEL } from '@/core/engine/rules';
 import { Notice, Panel } from '../parts/Panel';
 import { StatusChip } from '../parts/Status';
+import { ReadinessPanel } from '../parts/ReadinessPanel';
 
 /**
  * Resumen del vehículo.
@@ -15,7 +16,7 @@ import { StatusChip } from '../parts/Status';
  * verificó.
  */
 export function Dashboard() {
-  const { info, systems, evaluated, diagnosis, dtcs, setScreen } = useApp();
+  const { info, systems, evaluated, diagnosis, dtcs, setScreen, mode } = useApp();
   if (!info) return null;
 
   const evs = evaluated();
@@ -28,6 +29,8 @@ export function Dashboard() {
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
+      <ReadinessPanel readiness={info.readiness} mode={mode} />
+
       <Panel
         title="Estado del vehículo"
         aside={

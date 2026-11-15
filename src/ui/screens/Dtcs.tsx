@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useApp } from '@/state/store';
 import { dtcArea, dtcKindLabel } from '@/core/obd2/dtc';
 import { findDtcFor } from '@/knowledge';
+import { PID_DEFS } from '@/core/obd2/pids';
 import { SOURCE_LABEL } from '@/knowledge/types';
 import { Button, Notice, Panel } from '../parts/Panel';
 
@@ -14,8 +15,16 @@ import { Button, Notice, Panel } from '../parts/Panel';
  * tiene el código, lo dice, muestra solo el área orientativa derivada del
  * rango numérico y aclara que es una pista, no una descripción.
  */
+/** Primer parámetro de cada PID, que es el que representa la foto. */
+const PARAM_INDEX_POR_PID = new Map(
+  PID_DEFS.map((d) => [d.pid, d.params[0]!] as const),
+);
+
 export function Dtcs() {
-  const { dtcs, refreshDtcs, clearDtcs, vehicleContext, info } = useApp();
+  const {
+    dtcs, refreshDtcs, clearDtcs, vehicleContext, info,
+    freeze, freezeCargando, cargarFreezeFrame, mode,
+  } = useApp();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const ctx = vehicleContext();
@@ -39,6 +48,10 @@ export function Dtcs() {
             <Button variant="ghost" disabled={busy}
               onClick={() => void run(refreshDtcs)}>
               Actualizar
+            </Button>
+            <Button variant="ghost" disabled={busy || freezeCargando || dtcs.length === 0}
+              onClick={() => void cargarFreezeFrame()}>
+              {freezeCargando ? 'Leyendo…' : 'Datos congelados'}
             </Button>
             <Button variant="danger" disabled={busy || dtcs.length === 0}
               onClick={() => setConfirming(true)}>
@@ -154,6 +167,8 @@ export function Dtcs() {
         )}
       </Panel>
 
+      {freeze !== null && <FreezeFrame freeze={freeze} mode={mode} />}
+
       {confirming && (
         <ConfirmClear
           count={dtcs.length}
@@ -166,6 +181,80 @@ export function Dtcs() {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Datos congelados.
+ *
+ * La ECU guarda una foto de los sensores en el momento exacto en que
+ * registró el código. Para una falla intermitente vale más que cualquier
+ * lectura en vivo: dice a qué régimen, con qué carga y a qué temperatura
+ * ocurrió, que es lo que no se puede reproducir en el box.
+ */
+function FreezeFrame({ freeze, mode }: {
+  freeze: { dtc: string | null; values: Map<number, number | null> };
+  mode: 'simple' | 'tecnico';
+}) {
+  const filas = [...freeze.values.entries()]
+    .map(([pid, v]) => ({ pid, v, def: PARAM_INDEX_POR_PID.get(pid) }))
+    .filter((f) => f.def !== undefined && f.v !== null);
+
+  return (
+    <Panel
+      title="Datos congelados"
+      aside={
+        freeze.dtc !== null && (
+          <span className="num" style={{ fontSize: 12 }}>
+            disparado por {freeze.dtc}
+          </span>
+        )
+      }
+    >
+      {filas.length === 0 ? (
+        <div style={{ padding: 12, fontSize: 12, color: 'var(--color-ink-dim)' }}>
+          Esta ECU no guardó datos congelados, o no soporta el modo 02.
+        </div>
+      ) : (
+        <>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(min(150px, 100%), 1fr))',
+          }}>
+            {filas.map(({ pid, v, def }) => (
+              <div key={pid} style={{
+                padding: '8px 12px',
+                borderRight: '1px solid var(--color-line-soft)',
+                borderBottom: '1px solid var(--color-line-soft)',
+              }}>
+                <div className="label">{def!.label}</div>
+                <div className="num" style={{ fontSize: 17, marginTop: 1 }}>
+                  {v!.toFixed(def!.decimals)}
+                  <span style={{ fontSize: 10.5, color: 'var(--color-ink-faint)', marginLeft: 3 }}>
+                    {def!.unit}
+                  </span>
+                </div>
+                {mode === 'tecnico' && (
+                  <div className="num label" style={{ marginTop: 1 }}>
+                    PID 02{pid.toString(16).toUpperCase().padStart(2, '0')}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{ padding: 10 }}>
+            <p style={{
+              fontSize: 11, color: 'var(--color-ink-faint)', margin: 0, lineHeight: 1.55,
+            }}>
+              Estos son los valores del momento en que la ECU guardó el código,
+              no los actuales. Comparar ambos muestra en qué condiciones
+              apareció la falla, que es lo que no se puede reproducir con el
+              auto detenido en el box.
+            </p>
+          </div>
+        </>
+      )}
+    </Panel>
   );
 }
 

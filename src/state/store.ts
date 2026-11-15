@@ -80,6 +80,9 @@ interface AppState {
   agentVersion: string | null;
 
   taller: { nombre: string; tecnico: string; orden: string; contacto: string };
+  /** Datos congelados: la foto de los sensores al guardarse el código. */
+  freeze: { dtc: string | null; values: Map<number, number | null> } | null;
+  freezeCargando: boolean;
   historial: HistoryEntry[];
   historialCargando: boolean;
   /** Sesión del historial que se está mirando, o null para la actual. */
@@ -105,6 +108,7 @@ interface AppState {
   setAgentInterfaceId(id: string): void;
   probeAgent(): Promise<void>;
   setTaller(t: Partial<AppState['taller']>): void;
+  cargarFreezeFrame(): Promise<void>;
   cargarHistorial(): Promise<void>;
   abrirDelHistorial(entry: HistoryEntry | null): void;
   borrarDelHistorial(id: number): Promise<void>;
@@ -248,6 +252,8 @@ export const useApp = create<AppState>((set, get) => ({
     orden: '',
     contacto: leer('tallerContacto') ?? '',
   },
+  freeze: null,
+  freezeCargando: false,
   historial: [],
   historialCargando: false,
   historialAbierto: null,
@@ -272,6 +278,36 @@ export const useApp = create<AppState>((set, get) => ({
     guardar('tallerContacto', taller.contacto);
     return { taller };
   }),
+
+  /**
+   * Lee los datos congelados.
+   *
+   * Bajo demanda y no al conectar: son varias solicitudes y la mayoría de
+   * las sesiones no los necesitan. Cuando hay una falla intermitente, en
+   * cambio, son lo más valioso de toda la lectura.
+   */
+  async cargarFreezeFrame() {
+    const { session, info } = get();
+    if (!session || !info) return;
+    set({ freezeCargando: true });
+    try {
+      const dtc = await session.obd.readFreezeFrameDtc();
+      // Las condiciones que importan para situar una falla.
+      const pids = [0x0c, 0x0d, 0x04, 0x05, 0x0b, 0x0f, 0x10, 0x11, 0x06, 0x07]
+        .filter((p) => info.supportedPids.has(p));
+      const foto = await session.obd.readFreezeFrame(pids);
+      const values = new Map<number, number | null>();
+      for (const [pid, lectura] of foto) {
+        const primero = [...lectura.values.values()][0];
+        values.set(pid, primero ?? null);
+      }
+      set({ freeze: { dtc, values } });
+    } catch (err) {
+      set({ fault: toFault(err) });
+    } finally {
+      set({ freezeCargando: false });
+    }
+  },
 
   async cargarHistorial() {
     set({ historialCargando: true });

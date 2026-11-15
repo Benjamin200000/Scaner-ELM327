@@ -169,6 +169,15 @@ aceleración.
 
 - Capa KWP2000 (ISO 14230-3): sesiones, testerPresent periódico,
   respuestas negativas traducidas, lectura por identificador local
+- **Lectura agrupada**: hasta seis PID en una sola solicitud sobre CAN,
+  con detección de capacidad y camino de vuelta. Un ciclo de diez
+  parámetros pasa de diez idas y vueltas a dos.
+- **Reensamblado ISO-TP**: las respuestas largas con headers activos
+  llegan partidas en varias tramas CAN con bytes de control. Sin
+  tratarlo, el VIN y cualquier lectura agrupada salen corruptas.
+- **Monitores de emisiones** (PID 01) con veredicto de revisión técnica
+- **Datos congelados** (modo 02): la foto de los sensores en el momento
+  en que la ECU guardó el código
 - Funciones de servicio con precondiciones verificadas contra datos reales,
   modo simulación y confirmación doble
 
@@ -215,6 +224,13 @@ vehículo delante se contrasta contra la documentación, y recién ahí se marca
 y decenas de miles específicos de fabricante. La base crece agregando
 entradas con su procedencia declarada; agregar números plausibles pero no
 verificados rompería la garantía central del proyecto.
+
+La decodificación de los **monitores de emisiones** sigue el esquema
+documentado de SAE J1979 pero no está contrastada contra la norma ni contra
+un vehículo real. La interfaz muestra los cuatro bytes crudos junto al
+resultado y lo advierte. Para verificarla: en un auto recién borrado casi
+todo debería figurar PENDIENTE y en uno con varios días de uso casi todo
+COMPLETO; si sale al revés, la polaridad está invertida.
 
 Las escalas de los PID ampliados (0x70, 0x78, 0x7A, 0x7C) están marcadas
 `verified: false`: su layout varía entre fabricantes y no se pudo verificar

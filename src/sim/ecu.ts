@@ -172,8 +172,14 @@ export class Elm327Simulator {
     const mode = hex.slice(0, 2);
     const pid = hex.slice(2, 4);
     switch (mode) {
-      case '01':
+      case '01': {
+        // Más de un PID en la solicitud: respuesta agrupada.
+        const pids = hex.slice(2).match(/.{2}/g) ?? [];
+        if (pids.length > 1) return this.mode01Multiple(pids);
         return this.mode01(pid);
+      }
+      case '02':
+        return this.mode02(pid, hex.slice(4));
       case '03':
         return this.mode03();
       case '04':
@@ -298,6 +304,28 @@ export class Elm327Simulator {
     return this.kwp.session;
   }
 
+  /**
+   * Modo 01 con varios PID en una misma solicitud.
+   *
+   * SAE J1979 lo permite hasta seis sobre CAN. El simulador lo soporta solo
+   * en los perfiles CAN, igual que un vehículo real: en K-Line la trama no
+   * da el largo necesario y la ECU no contesta.
+   */
+  private mode01Multiple(pids: string[]): string[] {
+    const isCan = Number(this.profile.protocolNumber) >= 6;
+    if (!isCan || pids.length > 6) return ['NO DATA'];
+
+    const salida: string[] = [];
+    for (const pid of pids) {
+      if (!this.profile.supportedPids.includes(pid)) continue;
+      const bytes = this.pidValue(pid);
+      if (!bytes) continue;
+      salida.push(pid, ...bytes);
+    }
+    if (salida.length === 0) return ['NO DATA'];
+    return [this.frame(['41', ...salida])];
+  }
+
   private mode01(pid: string): string[] {
     if (/^([02468ACE]0|00)$/.test(pid) || pid === '20' || pid === '40' ||
         pid === '60' || pid === '80' || pid === 'A0' || pid === 'C0') {
@@ -349,10 +377,12 @@ export class Elm327Simulator {
     };
     switch (pid) {
       case '01': {
-        // MIL + cantidad de DTC confirmados.
+        // Byte A: testigo de avería y cantidad de códigos confirmados.
+        // Bytes B, C y D: estado de los monitores, propio de cada perfil.
         const stored = this.activeDtcs('stored').length;
         const a = (stored > 0 ? 0x80 : 0x00) | stored;
-        return [byte(a), '07', 'E5', '00'];
+        const [b, c, d] = this.profile.readiness;
+        return [byte(a), byte(b), byte(c), byte(d)];
       }
       case '03': return ['02', '00']; // lazo cerrado, banco 1
       case '04': return u8(Math.round((s.loadPct * 255) / 100));
@@ -432,6 +462,42 @@ export class Elm327Simulator {
   private activeDtcs(kind: 'stored' | 'pending' | 'permanent') {
     if (this.clearedAt !== null && kind !== 'permanent') return [];
     return this.profile.dtcs.filter((d) => d.kind === kind);
+  }
+
+  /**
+   * Modo 02: datos congelados.
+   *
+   * Solo hay trama si existe un código almacenado. Los valores son los que
+   * había al momento de guardarlo, no los actuales: por eso el perfil fija
+   * una foto propia en lugar de reusar el estado vivo.
+   */
+  private mode02(pid: string, frameHex: string): string[] {
+    const frame = frameHex === '' ? 0 : parseInt(frameHex, 16);
+    if (frame !== 0) return ['NO DATA'];
+    const almacenados = this.activeDtcs('stored');
+    if (almacenados.length === 0) return ['NO DATA'];
+
+    // PID 02 del modo 02: el código que disparó la foto.
+    if (pid === '02') {
+      const codigo = almacenados[0]?.code ?? 'P0000';
+      return [this.frame(['42', '02', '00', ...encodeDtc(codigo)])];
+    }
+
+    // La foto: régimen y carga más altos que el ralentí actual, porque la
+    // falla se registró conduciendo.
+    const foto: Record<string, string[]> = {
+      '04': ['6E'],              // 43 % de carga
+      '05': ['67'],              // 63 °C
+      '0C': ['1F', '40'],        // 2000 rpm
+      '0D': ['3C'],              // 60 km/h
+      '0F': ['44'],              // 28 °C
+      '10': ['04', 'B0'],        // 12 g/s
+      '11': ['38'],              // 22 % de mariposa
+      '0B': ['60'],              // 96 kPa
+    };
+    const bytes = foto[pid];
+    if (!bytes) return ['NO DATA'];
+    return [this.frame(['42', pid, '00', ...bytes])];
   }
 
   private mode03(): string[] {

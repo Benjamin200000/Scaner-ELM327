@@ -55,6 +55,11 @@ export interface SimProfile {
   dtcs: SimDtc[];
   /** PIDs del modo 01 que la ECU declara soportar. */
   supportedPids: string[];
+  /**
+   * Bytes B, C y D del PID 01: estado de los monitores de emisiones.
+   * El byte A lo arma el simulador según los códigos almacenados.
+   */
+  readiness: [number, number, number];
   /** Evoluciona el estado del motor un paso de `dt` segundos. */
   step(state: SimEngineState, dt: number): void;
   initial(): SimEngineState;
@@ -118,6 +123,9 @@ export const golf20_8v: SimProfile = {
     '0F', '10', '11', '13', '1C', '1F', '21', '2F', '31', '33',
     '42', '46', '4D', '51',
   ],
+  // Encendido por chispa (bit 3 de B en 0), continuos soportados y
+  // completos, y los no continuos del lado gasolina todos completos.
+  readiness: [0x07, 0xe5, 0x00],
   initial: () => baseState({ coolantC: 19, iatC: 19 }),
   step(s, dt) {
     s.t += dt;
@@ -160,6 +168,10 @@ export const tdi20_dpf: SimProfile = {
     '0F', '10', '11', '1F', '21', '23', '2F', '31', '33', '42',
     '46', '5C', '62', '70', '78', '7A', '7C',
   ],
+  // Encendido por compresión (bit 3 de B en 1). El monitor del filtro de
+  // partículas queda pendiente, que es lo típico tras una regeneración
+  // interrumpida o un borrado reciente.
+  readiness: [0x0f, 0x6b, 0x40],
   initial: () => baseState({
     coolantC: 21,
     iatC: 21,

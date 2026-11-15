@@ -5,6 +5,7 @@ import { Obd2Service, type VehicleIdentity } from '@/core/obd2/service';
 import type { Dtc } from '@/core/obd2/dtc';
 import { PID_DEFS } from '@/core/obd2/pids';
 import { availableParams } from '@/core/engine/systems';
+import type { Readiness } from '@/core/obd2/readiness';
 import {
   type CapabilityVerdict,
   evaluateCapabilities,
@@ -29,6 +30,10 @@ export interface SessionInfo {
   capabilities: CapabilityVerdict[];
   /** Combustible según el PID 0x51, si la ECU lo expone. */
   fuel: 'gasolina' | 'diesel' | null;
+  /** La ECU acepta pedir varios PID en una sola solicitud. */
+  agrupacion: boolean;
+  /** Estado de los monitores de emisiones al conectar. */
+  readiness: Readiness | null;
 }
 
 export interface PollResult {
@@ -93,6 +98,13 @@ export class DiagnosticSession {
     const supportedPids = await this.obd.discoverSupportedPids();
     const identity = await this.obd.readIdentity();
     const fuel = await this.readFuelType(supportedPids);
+    const readiness = await this.obd.readReadiness().catch(() => null);
+
+    // Se prueba una sola vez, al conectar: si la ECU acepta solicitudes
+    // agrupadas, el ciclo de datos en vivo se vuelve varias veces más
+    // rápido. Si no, se sigue de a uno sin que nada más cambie.
+    const candidatos = [0x0c, 0x0d, 0x04].filter((p) => supportedPids.has(p));
+    const agrupacion = await this.obd.probarAgrupacion(candidatos).catch(() => false);
 
     const info: SessionInfo = {
       protocol,
@@ -107,6 +119,8 @@ export class DiagnosticSession {
         ...(declaredMake !== undefined ? { make: declaredMake } : {}),
       }),
       fuel,
+      agrupacion,
+      readiness,
     };
     this._info = info;
     this.planPolling(supportedPids);
@@ -173,8 +187,38 @@ export class DiagnosticSession {
       this.pollCursor = (this.pollCursor + slowPerCycle) % slowAll.length;
     }
 
-    for (const pid of [...fast, ...slice]) {
-      if ((this.deadPids.get(pid) ?? 0) >= 3) continue;
+    const pedidos = [...fast, ...slice].filter(
+      (pid) => (this.deadPids.get(pid) ?? 0) < 3,
+    );
+
+    if (info.agrupacion) {
+      // De a seis, que es el tope de la norma. Catorce parámetros pasan de
+      // catorce idas y vueltas a tres.
+      for (let i = 0; i < pedidos.length; i += 6) {
+        const grupo = pedidos.slice(i, i + 6);
+        try {
+          const r = await this.obd.readPidBatch(grupo);
+          for (const [pid, lectura] of r.readings) {
+            for (const [k, v] of lectura.values) values.set(k, v);
+            this.deadPids.delete(pid);
+          }
+          for (const pid of r.missing) {
+            this.deadPids.set(pid, (this.deadPids.get(pid) ?? 0) + 1);
+          }
+        } catch (err) {
+          // Un grupo que falla entero puede ser un problema de enlace, no
+          // de los PID: se cuenta a cada uno, y si insisten se descartan.
+          const msg = err instanceof ElmError ? err.message : String(err);
+          for (const pid of grupo) {
+            failures.set(pid, msg);
+            this.deadPids.set(pid, (this.deadPids.get(pid) ?? 0) + 1);
+          }
+        }
+      }
+      return { values, failures, at: Date.now() };
+    }
+
+    for (const pid of pedidos) {
       try {
         const reading = await this.obd.readPid(pid);
         if (reading) {

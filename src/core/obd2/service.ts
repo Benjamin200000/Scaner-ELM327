@@ -3,6 +3,7 @@ import { ElmError } from '@/core/elm327/errors';
 import { extractPayload, joinObdBytes } from '@/core/elm327/parse';
 import { type Dtc, type DtcKind, parseDtcPayload } from './dtc';
 import { PID_DEFS, type PidDef, pidByNumber } from './pids';
+import { decodificarReadiness, type Readiness } from './readiness';
 
 /**
  * Servicios OBD-II genéricos sobre el driver del ELM327.
@@ -147,4 +148,186 @@ export class Obd2Service {
       throw err;
     }
   }
+  /**
+   * Estado de los monitores de emisiones (PID 01 del modo 01).
+   *
+   * Se lee aparte de los demás parámetros porque no es una medición: es el
+   * estado de los autodiagnósticos, y decide si un vehículo pasa una
+   * revisión técnica.
+   */
+  async readReadiness(): Promise<Readiness | null> {
+    const payload = await this.rawPid(0x01, 0x01);
+    if (payload === null) return null;
+    return decodificarReadiness(payload);
+  }
+
+  /**
+   * Datos congelados: la foto de los sensores en el momento en que la ECU
+   * guardó un código (modo 02).
+   *
+   * Vale mucho para diagnosticar una falla intermitente, porque dice en qué
+   * condiciones ocurrió: a qué régimen, con qué carga, a qué temperatura.
+   *
+   * El modo 02 reutiliza los PID del modo 01 y agrega un número de trama.
+   * No todas las ECU lo implementan, y las que lo hacen suelen guardar una
+   * sola trama.
+   */
+  async readFreezeFrame(pids: number[], frame = 0): Promise<Map<number, PidReading>> {
+    const salida = new Map<number, PidReading>();
+    for (const pid of pids) {
+      try {
+        const datos = await this.rawFreezeFrame(pid, frame);
+        if (datos === null) continue;
+        const def = pidByNumber(pid);
+        const values = new Map<string, number | null>();
+        if (def) {
+          for (const param of def.params) values.set(param.id, param.decode(datos));
+        }
+        salida.set(pid, { pid, values, raw: datos, at: Date.now() });
+      } catch (err) {
+        // Una ECU sin modo 02 rechaza cada PID: no es motivo para abortar.
+        if (!(err instanceof ElmError)) throw err;
+      }
+    }
+    return salida;
+  }
+
+  /**
+   * ¿Qué código provocó los datos congelados? Es el PID 02 dentro del modo 02.
+   * Devuelve null cuando la ECU no tiene ninguna trama guardada.
+   */
+  async readFreezeFrameDtc(frame = 0): Promise<string | null> {
+    try {
+      // El código ocupa dos bytes; el 0x02 no está en el catálogo de PID.
+      const datos = await this.rawFreezeFrame(0x02, frame, 2);
+      if (datos === null || datos.length < 2) return null;
+      const [a, b] = datos;
+      if (a === undefined || b === undefined) return null;
+      const { decodeDtc } = await import('./dtc');
+      return decodeDtc(a, b);
+    } catch (err) {
+      if (err instanceof ElmError) return null;
+      throw err;
+    }
+  }
+
+  /**
+   * @param esperados Bytes de datos esperados. Hace falta para los PID que
+   * no están en el catálogo, como el 0x02 que trae el código disparador:
+   * sin saber el largo no se puede distinguir el número de trama de un
+   * byte de datos, y saltear de más corre todo el contenido.
+   */
+  private async rawFreezeFrame(
+    pid: number,
+    frame: number,
+    esperados?: number,
+  ): Promise<number[] | null> {
+    const res = await this.driver.send(`02${hex2(pid)}${hex2(frame)}`, { timeoutMs: 3000 });
+    const bytes = joinObdBytes(res.lines);
+    if (bytes === null) return null;
+    const payload = extractPayload(bytes, 0x02, pid);
+    if (payload === null) return null;
+
+    // La respuesta repite el número de trama después del PID. Algunas
+    // implementaciones no lo hacen, así que se decide por el largo esperado
+    // en lugar de asumir: saltear un byte de más corre todos los datos.
+    const largo = esperados ?? pidByNumber(pid)?.bytes;
+    if (largo === undefined) return payload;
+    if (payload.length === largo) return payload;
+    if (payload.length >= largo + 1 && payload[0] === frame) {
+      return payload.slice(1, 1 + largo);
+    }
+    return payload.slice(0, largo);
+  }
+
+  /**
+   * Lee varios PID en una sola solicitud.
+   *
+   * SAE J1979 permite pedir hasta seis PID del modo 01 en un mismo mensaje
+   * y la ECU contesta todos juntos. Solo funciona sobre CAN: los protocolos
+   * más viejos no tienen tramas lo bastante largas.
+   *
+   * Importa mucho en la práctica. Un ELM327 hace entre 8 y 12 solicitudes
+   * por segundo; pidiendo de a uno, catorce parámetros tardan más de un
+   * segundo en refrescarse. Agrupados de a seis bajan a tres solicitudes.
+   * Es la diferencia entre ver una aceleración y ver una sucesión de saltos.
+   */
+  async readPidBatch(pids: number[]): Promise<BatchReading> {
+    const pedidos = pids.slice(0, MAX_PIDS_POR_SOLICITUD);
+    const readings = new Map<number, PidReading>();
+    if (pedidos.length === 0) return { readings, missing: [] };
+
+    const res = await this.driver.send(`01${pedidos.map(hex2).join('')}`, {
+      timeoutMs: 3000,
+    });
+    const bytes = joinObdBytes(res.lines);
+    if (bytes === null) return { readings, missing: pedidos };
+
+    const payload = extractPayload(bytes, 0x01);
+    if (payload === null) return { readings, missing: pedidos };
+
+    const at = Date.now();
+    for (const [pid, datos] of recorrerAgrupado(payload)) {
+      const def = pidByNumber(pid);
+      const values = new Map<string, number | null>();
+      if (def) {
+        for (const param of def.params) values.set(param.id, param.decode(datos));
+      }
+      readings.set(pid, { pid, values, raw: datos, at });
+    }
+    return { readings, missing: pedidos.filter((p) => !readings.has(p)) };
+  }
+
+  /**
+   * Comprueba si esta ECU acepta solicitudes agrupadas.
+   *
+   * No alcanza con que el protocolo sea CAN: hay ECU que ignoran el pedido
+   * múltiple o contestan solo el primer PID. Se exige que vuelvan TODOS los
+   * pedidos, porque conformarse con una respuesta parcial perdería
+   * parámetros en silencio, que es peor que ir de a uno.
+   */
+  async probarAgrupacion(candidatos: number[]): Promise<boolean> {
+    if (this.driver.protocol?.family !== 'can') return false;
+    const prueba = candidatos.slice(0, 3);
+    if (prueba.length < 2) return false;
+    try {
+      const r = await this.readPidBatch(prueba);
+      return r.missing.length === 0;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export const MAX_PIDS_POR_SOLICITUD = 6;
+
+export interface BatchReading {
+  /** Lecturas por PID. Los que la ECU no devolvió no aparecen. */
+  readings: Map<number, PidReading>;
+  /** PID que se pidieron y no volvieron. */
+  missing: number[];
+}
+
+/**
+ * Recorre la respuesta agrupada: <pid> <datos...> <pid> <datos...>
+ *
+ * El largo de cada bloque lo da el catálogo, porque la respuesta no lo
+ * incluye. Un PID desconocido corta el recorrido: sin saber cuántos bytes
+ * ocupa no se puede ubicar el siguiente, y seguir adivinando produciría
+ * valores inventados a partir de bytes corridos.
+ */
+export function recorrerAgrupado(payload: number[]): Map<number, number[]> {
+  const salida = new Map<number, number[]>();
+  let i = 0;
+  while (i < payload.length) {
+    const pid = payload[i];
+    if (pid === undefined) break;
+    const def = pidByNumber(pid);
+    if (!def) break;
+    const datos = payload.slice(i + 1, i + 1 + def.bytes);
+    if (datos.length < def.bytes) break;
+    salida.set(pid, datos);
+    i += 1 + def.bytes;
+  }
+  return salida;
 }

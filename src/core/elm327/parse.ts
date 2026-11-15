@@ -72,6 +72,12 @@ export function parseResponse(raw: string, command?: string): ParsedResponse {
 export function joinObdBytes(lines: string[]): number[] | null {
   if (lines.length === 0) return null;
 
+  // Con ATH1 y una respuesta que no entra en una trama CAN, el chip NO
+  // reensambla: entrega cada trama con su cabecera y su byte de control
+  // ISO-TP. Sin tratarlo, el VIN y cualquier lectura larga salen corruptas.
+  const isoTp = reensamblarIsoTp(lines);
+  if (isoTp !== null) return isoTp;
+
   const numbered = lines.filter((l) => /^[0-9A-F]\s*:/i.test(l));
   if (numbered.length > 0) {
     const ordered = numbered
@@ -88,6 +94,54 @@ export function joinObdBytes(lines: string[]): number[] | null {
 
   const bytes = lines.flatMap(hexBytes);
   return bytes.length > 0 ? bytes : null;
+}
+
+/**
+ * Reensambla una respuesta ISO-TP partida en varias tramas CAN.
+ *
+ * El primer byte después de la cabecera es el PCI:
+ *   0x0N       trama única, N bytes de datos
+ *   0x1N NN    primera trama, largo total de 12 bits
+ *   0x2N       trama consecutiva, N es el número de secuencia
+ *
+ * Devuelve null cuando las líneas no tienen esta forma, para que el camino
+ * normal siga funcionando. Solo actúa cuando hay varias líneas y aparecen
+ * una primera trama y al menos una consecutiva: con una sola línea el PCI
+ * es indistinguible de un byte de datos y adivinar sería peor que no hacer
+ * nada.
+ */
+function reensamblarIsoTp(lines: string[]): number[] | null {
+  if (lines.length < 2) return null;
+
+  const tramas: { pci: number; datos: number[] }[] = [];
+  for (const linea of lines) {
+    let compacto = linea.replace(/[^0-9A-Fa-f]/g, '');
+    // Cabecera CAN de 11 bits: tres dígitos hex, deja la línea impar.
+    if (compacto.length % 2 === 1 && compacto.length >= 3) compacto = compacto.slice(3);
+    const bytes: number[] = [];
+    for (let i = 0; i + 1 < compacto.length; i += 2) {
+      bytes.push(parseInt(compacto.slice(i, i + 2), 16));
+    }
+    const pci = bytes[0];
+    if (pci === undefined) return null;
+    tramas.push({ pci, datos: bytes.slice(1) });
+  }
+
+  const primera = tramas[0];
+  if (primera === undefined || (primera.pci & 0xf0) !== 0x10) return null;
+  if (!tramas.slice(1).every((t) => (t.pci & 0xf0) === 0x20)) return null;
+
+  // Largo total: 12 bits entre el nibble bajo del PCI y el byte siguiente.
+  const largo = ((primera.pci & 0x0f) << 8) | (primera.datos[0] ?? 0);
+  const salida = [...primera.datos.slice(1)];
+
+  // Las consecutivas van en orden de secuencia, que da la vuelta en 0x2F.
+  const consecutivas = tramas.slice(1)
+    .map((t, i) => ({ orden: i, seq: t.pci & 0x0f, datos: t.datos }))
+    .sort((a, b) => a.orden - b.orden);
+  for (const c of consecutivas) salida.push(...c.datos);
+
+  return salida.slice(0, largo);
 }
 
 /** La línea de largo es un hex de 2-3 dígitos sin separadores, sola. */
