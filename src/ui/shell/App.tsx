@@ -6,6 +6,7 @@ import { Dtcs } from '../screens/Dtcs';
 import { LiveData } from '../screens/LiveData';
 import { Emisiones } from '../screens/Emisiones';
 import { Features } from '../screens/Features';
+import { Memoria } from '../screens/Memoria';
 import { Informe } from '../screens/Informe';
 import { Historial } from '../screens/Historial';
 import { Terminal } from '../screens/Terminal';
@@ -40,6 +41,7 @@ const NAV: NavItem[] = [
   { id: 'datos', label: 'Datos en vivo', short: 'Datos', live: true, grupo: 'Diagnóstico' },
   { id: 'emisiones', label: 'Emisiones', short: 'Emisiones', live: true, grupo: 'Diagnóstico' },
   { id: 'funciones', label: 'Funciones', short: 'Funciones', live: true, grupo: 'Trabajo' },
+  { id: 'memoria', label: 'Lectura de memoria', short: 'Memoria', live: true, grupo: 'Trabajo' },
   { id: 'informe', label: 'Informe', short: 'Informe', live: false, grupo: 'Trabajo' },
   { id: 'historial', label: 'Historial', short: 'Historial', live: false, grupo: 'Trabajo' },
   { id: 'terminal', label: 'Terminal', short: 'Terminal', live: false, grupo: 'Herramientas' },
@@ -140,6 +142,7 @@ export function App() {
         {effective === 'datos' && <LiveData />}
         {effective === 'emisiones' && <Emisiones />}
         {effective === 'funciones' && <Features />}
+        {effective === 'memoria' && <Memoria />}
         {effective === 'informe' && <Informe />}
         {effective === 'historial' && <Historial />}
         {effective === 'terminal' && <Terminal />}

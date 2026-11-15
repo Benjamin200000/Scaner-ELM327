@@ -44,6 +44,44 @@ static uint32_t g_channelId = 0;
 static uint32_t g_filterId = 0;
 static char     g_ultimoError[80] = "Sin error";
 
+/* Estado UDS de la ECU falsa, para probar la lectura de memoria. */
+static int      g_extended   = 0;
+static int      g_unlocked   = 0;
+static uint8_t  g_seed[4]    = {0x11, 0x22, 0x33, 0x44};
+static uint32_t g_up_addr    = 0;
+static int32_t  g_up_left    = 0;
+static uint8_t  g_up_counter = 1;
+static uint8_t  g_flash[0x2000];
+static int      g_flash_init = 0;
+
+static void flash_init(void) {
+    if (g_flash_init) return;
+    const char *hdr = "EDC17-SIM CAL v1.0";
+    for (int i = 0; hdr[i]; i++) g_flash[i] = (uint8_t)hdr[i];
+    for (int i = 0x12; i < (int)sizeof(g_flash); i++) g_flash[i] = (uint8_t)((i * 7 + 0x3b) & 0xff);
+    g_flash_init = 1;
+}
+
+static void flash_read(uint32_t addr, int n, uint8_t *out) {
+    uint32_t base = addr >= 0x80000000u ? addr - 0x80000000u : addr;
+    for (int i = 0; i < n; i++) out[i] = g_flash[(base + i) % sizeof(g_flash)];
+}
+
+/* Misma llave de prueba que security.ts y el simulador. */
+static void expected_key(const uint8_t *seed, uint8_t *key) {
+    uint32_t s = (uint32_t)seed[0] << 24 | (uint32_t)seed[1] << 16 |
+                 (uint32_t)seed[2] << 8 | seed[3];
+    uint32_t k = ((s ^ 0x12345678u) + 0x9abcdef0u);
+    key[0] = (k >> 24) & 0xff; key[1] = (k >> 16) & 0xff;
+    key[2] = (k >> 8) & 0xff;  key[3] = k & 0xff;
+}
+
+static uint32_t rd_int(const uint8_t *p, int n) {
+    uint32_t v = 0;
+    for (int i = 0; i < n; i++) v = (v << 8) | p[i];
+    return v;
+}
+
 /* Cola de respuestas pendientes de la ECU simulada. */
 #define MAX_COLA 8
 static PASSTHRU_MSG g_cola[MAX_COLA];
@@ -147,6 +185,56 @@ int32_t PassThruWriteMsgs(uint32_t ChannelID, PASSTHRU_MSG *pMsg,
     } else if (modo == 0x09 && pid == 0x02) {
         uint8_t r[] = {0x49,0x02,0x01,'W','V','W','Z','Z','Z'};
         encolar(r,9);
+    } else if (modo == 0x10) {               /* sesión de diagnóstico */
+        if (pid == 0x02) { uint8_t r[] = {0x7f,0x10,0x33}; encolar(r,3); }
+        else { g_extended = (pid == 0x03 || pid == 0x85); g_unlocked = 0;
+               uint8_t r[] = {0x50, pid}; encolar(r,2); }
+    } else if (modo == 0x27) {               /* acceso de seguridad */
+        if (p[1] & 1) {                      /* pedir semilla */
+            uint8_t r[] = {0x67, p[1], g_seed[0], g_seed[1], g_seed[2], g_seed[3]};
+            encolar(r,6);
+        } else {                             /* enviar llave */
+            uint8_t key[4]; expected_key(g_seed, key);
+            if (n >= 6 && p[2]==key[0] && p[3]==key[1] && p[4]==key[2] && p[5]==key[3]) {
+                g_unlocked = 1; uint8_t r[] = {0x67, p[1]}; encolar(r,2);
+            } else { uint8_t r[] = {0x7f,0x27,0x35}; encolar(r,3); }
+        }
+    } else if (modo == 0x23) {               /* leer memoria por dirección */
+        flash_init();
+        if (!g_extended) { uint8_t r[] = {0x7f,0x23,0x7f}; encolar(r,3); }
+        else {
+            int naddr = p[1] & 0x0f, nsize = (p[1] >> 4) & 0x0f;
+            uint32_t addr = rd_int(&p[2], naddr);
+            uint32_t sz = rd_int(&p[2+naddr], nsize);
+            if (sz == 0 || sz > 0x100) { uint8_t r[] = {0x7f,0x23,0x31}; encolar(r,3); }
+            else { uint8_t out[0x104]; out[0]=0x63; flash_read(addr,sz,&out[1]); encolar(out, sz+1); }
+        }
+    } else if (modo == 0x35) {               /* solicitar subida */
+        flash_init();
+        if (!g_unlocked) { uint8_t r[] = {0x7f,0x35,0x33}; encolar(r,3); }
+        else {
+            int naddr = p[2] & 0x0f, nsize = (p[2] >> 4) & 0x0f;
+            g_up_addr = rd_int(&p[3], naddr);
+            g_up_left = (int32_t)rd_int(&p[3+naddr], nsize);
+            g_up_counter = 1;
+            uint8_t r[] = {0x75, 0x20, 0x00, 0x40};  /* bloque máx 0x40 */
+            encolar(r,4);
+        }
+    } else if (modo == 0x36) {               /* transferir bloque */
+        if (g_up_left <= 0) { uint8_t r[] = {0x7f,0x36,0x24}; encolar(r,3); }
+        else if (p[1] != g_up_counter) { uint8_t r[] = {0x7f,0x36,0x73}; encolar(r,3); }
+        else {
+            int blk = g_up_left < 0x40 ? g_up_left : 0x40;
+            uint8_t out[0x42]; out[0]=0x76; out[1]=g_up_counter;
+            flash_read(g_up_addr, blk, &out[2]);
+            g_up_addr += blk; g_up_left -= blk;
+            g_up_counter = (g_up_counter % 0xff) + 1;
+            encolar(out, blk + 2);
+        }
+    } else if (modo == 0x37) {               /* terminar transferencia */
+        g_up_left = 0; uint8_t r[] = {0x77}; encolar(r,1);
+    } else if (modo == 0x3e) {               /* tester present */
+        if (!(n >= 2 && (p[1] & 0x80))) { uint8_t r[] = {0x7e,0x00}; encolar(r,2); }
     }
     return STATUS_NOERROR;
 }

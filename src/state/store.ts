@@ -18,6 +18,8 @@ import { History, type HistoryEntry } from './history';
 import { leerModo06, type TestResult } from '@/core/obd2/mode06';
 import { leerIdentificacionUds, type DidValue } from '@/core/uds/ident';
 import { probarAdaptador, type InformeAdaptador } from '@/core/elm327/adapterTest';
+import { leerRegion, type ResultadoLectura, volcadoHex } from '@/core/uds/memory';
+import { moduloPorId, type RegionMemoria } from '@/core/uds/modules';
 import { ServiceRunner, gate, type GateResult } from '@/core/service/runner';
 import { routineById } from '@/core/service/routines';
 import type { RoutineContext, RunMode, RunResult, StepOutcome } from '@/core/service/types';
@@ -32,7 +34,7 @@ import type { RoutineContext, RunMode, RunResult, StepOutcome } from '@/core/ser
 
 export type Screen =
   | 'conexion' | 'resumen' | 'computadora' | 'codigos' | 'datos' | 'emisiones'
-  | 'funciones' | 'informe' | 'historial' | 'terminal';
+  | 'funciones' | 'memoria' | 'informe' | 'historial' | 'terminal';
 
 /** Un paso de la conexión, para mostrar qué está haciendo la app. */
 export interface PasoBitacora {
@@ -97,6 +99,9 @@ interface AppState {
   /** Identificación UDS por ECU. */
   uds: Record<string, DidValue[]>;
   adaptador: InformeAdaptador | null;
+  /** Lectura de memoria: resultado, avance y volcado del último leído. */
+  lectura: { resultado: ResultadoLectura; volcado: string[] } | null;
+  lecturaAvance: { leido: number; total: number } | null;
   /** Operación larga en curso: 'modo06', 'uds:7E8', 'adaptador'. */
   ocupado: string | null;
   /** Datos congelados: la foto de los sensores al guardarse el código. */
@@ -131,6 +136,8 @@ interface AppState {
   cargarModo06(): Promise<void>;
   cargarUds(ecu: string): Promise<void>;
   ejecutarPruebaAdaptador(): Promise<void>;
+  leerMemoria(moduloId: string, region: RegionMemoria): Promise<void>;
+  cancelarLectura(): void;
   cargarHistorial(): Promise<void>;
   abrirDelHistorial(entry: HistoryEntry | null): void;
   borrarDelHistorial(id: number): Promise<void>;
@@ -141,6 +148,7 @@ interface AppState {
   routineContext(): RoutineContext;
   gateRoutine(routineId: string, mode: RunMode): GateResult | null;
   exportTrace(): void;
+  descargarMemoria(): void;
 
   connect(kind: TransportKind): Promise<void>;
   disconnect(): Promise<void>;
@@ -236,6 +244,7 @@ function guardar(clave: string, valor: string): void {
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let cancelRequested = false;
 let vueltaEnCurso: Promise<void> | null = null;
+let cancelarMemoria = false;
 
 export const useApp = create<AppState>((set, get) => ({
   screen: 'conexion',
@@ -279,6 +288,8 @@ export const useApp = create<AppState>((set, get) => ({
   mode06: null,
   uds: {},
   adaptador: null,
+  lectura: null,
+  lecturaAvance: null,
   ocupado: null,
   freeze: null,
   freezeCargando: false,
@@ -331,6 +342,33 @@ export const useApp = create<AppState>((set, get) => ({
     if (!session) return;
     await exclusivo(set, get, 'adaptador', async () => {
       set({ adaptador: await probarAdaptador(session.driver) });
+    });
+  },
+
+  cancelarLectura: () => { cancelarMemoria = true; },
+
+  /**
+   * Lee una región de memoria de la ECU.
+   *
+   * Con el sondeo detenido, porque fija la cabecera del adaptador a una ECU
+   * y abre una sesión extendida: dejar el ciclo de datos en vivo compitiendo
+   * la cortaría a la mitad.
+   */
+  async leerMemoria(moduloId, region) {
+    const { session } = get();
+    const modulo = moduloPorId(moduloId);
+    if (!session || !modulo) return;
+    cancelarMemoria = false;
+    set({ lectura: null, lecturaAvance: { leido: 0, total: region.tamano } });
+    await exclusivo(set, get, 'memoria', async () => {
+      const resultado = await leerRegion(session.driver, modulo, region, {
+        onAvance: (a) => set({ lecturaAvance: { leido: a.leido, total: a.total } }),
+        cancelar: () => cancelarMemoria,
+      });
+      set({
+        lectura: { resultado, volcado: volcadoHex(resultado.datos, region.direccion) },
+        lecturaAvance: null,
+      });
     });
   },
 
@@ -497,6 +535,19 @@ export const useApp = create<AppState>((set, get) => ({
    * este archivo se puede contrastar la escala de un PID ampliado o la
    * respuesta de una ECU sin tener el auto delante.
    */
+  descargarMemoria() {
+    const l = get().lectura;
+    if (l === null) return;
+    const blob = new Blob([l.resultado.datos.slice()], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const dir = l.resultado.region.direccion.toString(16).toUpperCase().padStart(8, '0');
+    a.download = `ecu-${l.resultado.region.id}-${dir}.bin`.toLowerCase();
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
   exportTrace() {
     const { session, info, manual, trace, values, dtcs } = get();
     const payload = {

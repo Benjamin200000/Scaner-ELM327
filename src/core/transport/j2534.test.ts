@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 import { AgentTransport } from './agent';
 import { Elm327Driver } from '@/core/elm327/driver';
 import { Obd2Service } from '@/core/obd2/service';
+import { leerRegion } from '@/core/uds/memory';
+import type { EcuModule } from '@/core/uds/modules';
 
 /**
  * J2534 de punta a punta, sin hardware.
@@ -142,4 +144,57 @@ describe('J2534 a través del agente', () => {
     driver.detach();
     await t.close();
   }, 30000);
+
+  it('lee memoria de la ECU por UDS a través del J2534 real', async () => {
+    // Este es el punto: lo que el ELM327 no puede, el J2534 sí. El motor de
+    // lectura corre completo sobre el FFI y la DLL falsa, que modela sesión,
+    // acceso de seguridad y subida por bloques.
+    const t = await abrir();
+    const driver = new Elm327Driver(t, { timeoutMs: 5000, initTimeoutMs: 9000 });
+    driver.attach();
+    await driver.initialize();
+
+    const modulo: EcuModule = {
+      id: 'fake', label: 'DLL de prueba', aplica: 'test',
+      reqAddr: '7E0', resAddr: '7E8', sesion: 0x03,
+      seguridad: { nivel: 0x01, algoritmo: 'sim-prueba' },
+      metodo: 'subida', addrBytes: 4, sizeBytes: 4,
+      regiones: [{ id: 'cal', label: 'Calibración', direccion: 0x80000800, tamano: 0x80 }],
+      soloSimulador: true,
+    };
+    try {
+      const r = await leerRegion(driver, modulo, modulo.regiones[0]!);
+      expect(r.completa).toBe(true);
+      expect(r.datos).toHaveLength(0x80);
+      // Byte en offset 0x800 de la flash: (0x800*7 + 0x3b) & 0xff.
+      expect(r.datos[0]).toBe((0x800 * 7 + 0x3b) & 0xff);
+    } finally {
+      driver.detach();
+      await t.close();
+    }
+  }, 40000);
+
+  it('la DLL rechaza la subida sin acceso de seguridad', async () => {
+    const t = await abrir();
+    const driver = new Elm327Driver(t, { timeoutMs: 5000, initTimeoutMs: 9000 });
+    driver.attach();
+    await driver.initialize();
+    const modulo: EcuModule = {
+      id: 'fake2', label: 'DLL sin llave', aplica: 'test',
+      reqAddr: '7E0', resAddr: '7E8', sesion: 0x03,
+      seguridad: { nivel: 0, algoritmo: 'ninguno' },
+      metodo: 'subida', addrBytes: 4, sizeBytes: 4,
+      regiones: [{ id: 'cal', label: 'Calibración', direccion: 0x80000800, tamano: 0x40 }],
+      soloSimulador: true,
+    };
+    try {
+      const r = await leerRegion(driver, modulo, modulo.regiones[0]!);
+      expect(r.completa).toBe(false);
+      expect(r.motivo).toMatch(/denegado|seguridad/i);
+    } finally {
+      driver.detach();
+      await t.close();
+    }
+  }, 40000);
+
 });

@@ -76,6 +76,8 @@ export interface SimProfile {
   uds?: Record<string, string>;
   /** Resultados de autodiagnóstico del modo 06. */
   mode06?: SimTest[];
+  /** La lectura de memoria exige acceso de seguridad previo. */
+  lecturaRequiereSeguridad?: boolean;
   /** Segunda unidad que también contesta en el bus (transmisión). */
   segunda?: {
     ecuName: string;
@@ -206,6 +208,7 @@ export const tdi20_dpf: SimProfile = {
     F197: 'R4 2.0l TDI',
     F18C: '0281017946',
   },
+  lecturaRequiereSeguridad: true,
   mode06: [
     // Filtro de partículas: valor por encima del máximo, prueba fallida.
     { mid: 0xb2, tid: 0x8a, uas: 0x17, value: 0x0e10, min: 0x0000, max: 0x0bb8 },

@@ -54,7 +54,42 @@ export class Elm327Simulator {
     serviceDays: 42,
     /** Cuántas veces se reinició, para verificar en los tests. */
     serviceResets: 0,
+    /** Desbloqueada por acceso de seguridad. */
+    desbloqueada: false,
+    /** Última semilla entregada, para validar la llave. */
+    semilla: [0, 0, 0, 0] as number[],
+    /** Subida en curso: dirección, bytes restantes, próximo contador. */
+    subida: null as null | { dir: number; restante: number; contador: number },
+    seguridadRequerida: () => this.profile.lecturaRequiereSeguridad ?? false,
   };
+
+  /**
+   * "Flash" simulada: 64 KB con un encabezado reconocible y un relleno
+   * determinista, para verificar que lo que se lee es lo que hay.
+   */
+  private memoria = (() => {
+    const m = new Uint8Array(0x2_0000);
+    const cab = new TextEncoder().encode('EDC17-SIM CAL v1.0');
+    m.set(cab, 0);
+    for (let i = 0x12; i < m.length; i++) m[i] = (i * 7 + 0x3b) & 0xff;
+    return m;
+  })();
+
+  /** Lee de la flash simulada por dirección absoluta (base 0x80000000). */
+  private leerMemoria(dir: number, n: number): number[] {
+    const base = dir >= 0x8000_0000 ? dir - 0x8000_0000 : dir;
+    const out: number[] = [];
+    for (let i = 0; i < n; i++) out.push(this.memoria[(base + i) % this.memoria.length] ?? 0);
+    return out;
+  }
+
+  /** Algoritmo de llave de prueba, el mismo que security.ts. */
+  private llaveEsperada(semilla: number[]): number[] {
+    const s = ((semilla[0] ?? 0) << 24 | (semilla[1] ?? 0) << 16
+      | (semilla[2] ?? 0) << 8 | (semilla[3] ?? 0)) >>> 0;
+    const k = (((s ^ 0x1234_5678) >>> 0) + 0x9abc_def0) >>> 0;
+    return [(k >>> 24) & 0xff, (k >>> 16) & 0xff, (k >>> 8) & 0xff, k & 0xff];
+  }
 
   constructor(opts: SimOptions = {}) {
     this.profile = opts.profile ?? golf20_8v;
@@ -234,7 +269,7 @@ export class Elm327Simulator {
     const negative = (nrc: number): string[] =>
       this.frame(['7F', byte(sid), byte(nrc)]);
 
-    const extended = this.kwp.session === 0x85 || this.kwp.session === 0x86;
+    const extended = [0x85, 0x86, 0x03, 0x02].includes(this.kwp.session);
 
     switch (sid) {
       case 0x10: {
@@ -243,9 +278,15 @@ export class Elm327Simulator {
         // La sesión de programación no se habilita en el simulador: es la
         // que puede dejar una ECU inutilizable y no hay razón para
         // practicarla contra un modelo de juguete.
-        if (type === 0x86) return negative(0x33);
-        if (type !== 0x81 && type !== 0x85 && type !== 0x89) return negative(0x12);
+        // La sesión de programación (0x02 en UDS, 0x86 en KWP) no se habilita.
+        if (type === 0x86 || type === 0x02) return negative(0x33);
+        // Sesiones extendidas: 0x85 (KWP) y 0x03 (UDS) habilitan escrituras
+        // y lecturas de memoria.
+        const conocidas = [0x81, 0x85, 0x89, 0x01, 0x03];
+        if (!conocidas.includes(type)) return negative(0x12);
         this.kwp.session = type;
+        // Al cambiar de sesión se pierde el desbloqueo, como en una ECU real.
+        this.kwp.desbloqueada = false;
         return positive([type]);
       }
 
@@ -317,12 +358,77 @@ export class Elm327Simulator {
         return this.frame(['62', did.slice(0, 2), did.slice(2, 4), ...chars], ecu);
       }
 
-      case 0x27: // securityAccess
-        return negative(0x33);
+      case 0x27: { // securityAccess (semilla / llave)
+        if (this.direccionada() === 'nadie') return ['NO DATA'];
+        const sub = args[0];
+        if (sub === undefined) return negative(0x12);
+        if (sub % 2 === 1) {
+          // Pedido de semilla. Si ya está desbloqueada, se devuelven ceros.
+          if (this.kwp.desbloqueada) return positive([sub, 0, 0, 0, 0]);
+          this.kwp.semilla = [0x11, 0x22, 0x33, 0x44];
+          return positive([sub, ...this.kwp.semilla]);
+        }
+        // Envío de llave.
+        const esperada = this.llaveEsperada(this.kwp.semilla);
+        const recibida = args.slice(1);
+        if (esperada.every((b, i) => b === recibida[i])) {
+          this.kwp.desbloqueada = true;
+          return positive([sub]);
+        }
+        return negative(0x35); // llave inválida
+      }
+
+      case 0x23: { // readMemoryByAddress
+        if (!extended) return negative(0x7f);
+        const alfi = args[0] ?? 0;
+        const naddr = alfi & 0x0f;
+        const nsize = (alfi >> 4) & 0x0f;
+        const dir = this.leerEntero(args, 1, naddr);
+        const tam = this.leerEntero(args, 1 + naddr, nsize);
+        if (tam === 0 || tam > 0x100) return negative(0x31);
+        return positive(this.leerMemoria(dir, tam));
+      }
+
+      case 0x35: { // requestUpload
+        if (!extended) return negative(0x7f);
+        if (this.kwp.seguridadRequerida() && !this.kwp.desbloqueada) return negative(0x33);
+        const alfi = args[1] ?? 0;
+        const naddr = alfi & 0x0f;
+        const nsize = (alfi >> 4) & 0x0f;
+        const dir = this.leerEntero(args, 2, naddr);
+        const tam = this.leerEntero(args, 2 + naddr, nsize);
+        this.kwp.subida = { dir, restante: tam, contador: 1 };
+        // Se anuncia un tamaño de bloque de 0x40.
+        return positive([0x20, 0x00, 0x40]);
+      }
+
+      case 0x36: { // transferData
+        const sub = this.kwp.subida;
+        if (!sub) return negative(0x24);
+        const esperado = sub.contador & 0xff;
+        if ((args[0] ?? 0) !== esperado) return negative(0x73); // contador equivocado
+        const n = Math.min(0x40, sub.restante);
+        const datos = this.leerMemoria(sub.dir, n);
+        sub.dir += n;
+        sub.restante -= n;
+        sub.contador = (sub.contador % 0xff) + 1;
+        return positive([esperado, ...datos]);
+      }
+
+      case 0x37: // requestTransferExit
+        this.kwp.subida = null;
+        return positive();
 
       default:
         return negative(0x11); // servicio no soportado
     }
+  }
+
+  /** Lee un entero big-endian de `n` bytes desde `args`. */
+  private leerEntero(args: number[], desde: number, n: number): number {
+    let v = 0;
+    for (let i = 0; i < n; i++) v = (v * 256) + (args[desde + i] ?? 0);
+    return v >>> 0;
   }
 
   /** Cuántas veces se reinició el intervalo de servicio. Para los tests. */

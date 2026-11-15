@@ -249,14 +249,38 @@ propia ECU.
 
 ### Leer el mapa de la ECU
 
-No está implementado, y con un ELM327 no es viable en general. Leer la
-memoria flash usa servicios de fabricante (lectura de memoria por dirección
-o carga de datos) detrás de un acceso de seguridad cuya clave es propia de
-cada ECU, y el ELM327 limita el largo de los mensajes y la temporización.
-Varias ECU modernas directamente no permiten leer la flash por el conector.
-Lo que sí se lee por OBD es la identidad de la calibración: número de
-repuesto, versión de software y CVN, que es lo que hace falta para
-conseguir el archivo correcto y para detectar una reprogramación.
+Con un **ELM327** en general no se puede (límite de largo de mensaje). Con un
+**J2534** como el Autel MaxiFlash, sí: el camino de lectura por UDS está
+implementado (pantalla **Lectura de memoria**).
+
+El flujo es el estándar ISO 14229, el mismo que usan PCMFlash y las
+herramientas abiertas: abrir sesión extendida, acceso de seguridad
+(semilla/llave), y lectura por dirección (servicio 0x23) o por bloques
+(0x35/0x36/0x37). Está probado de punta a punta sobre el FFI de J2534 contra
+una ECU simulada en la DLL de prueba.
+
+**Es solo lectura.** No hay escritura ni reprogramación de flash: una
+escritura fallida inutiliza la ECU y no se puede deshacer, así que queda
+fuera a propósito.
+
+Funciona con **módulos**, como PCMFlash: cada módulo describe una familia de
+ECU (direcciones, sesión, algoritmo de seguridad, método y regiones). La app
+trae el del simulador y un módulo manual. Un módulo para una ECU real
+necesita dos cosas que son propias de cada ECU y que la app **no inventa**:
+
+- el **algoritmo de llave** del acceso de seguridad (se conecta en
+  `src/core/uds/security.ts`; para muchas ME7.5 de VAG la comunidad de
+  NefMoto reporta lectura sin desbloqueo);
+- el **mapa de direcciones** de lo que se quiere leer.
+
+Fabricar un algoritmo de llave no sirve: una llave incorrecta la rechaza la
+ECU y gasta intentos hasta bloquearla un rato. Por eso la ranura queda
+abierta para conectar el algoritmo real.
+
+Lo que sí se lee siempre por OBD es la **identidad** de la calibración
+(número de repuesto, versión de software, CVN), en la pantalla Computadora:
+es lo que hace falta para conseguir el archivo correcto y para detectar una
+reprogramación.
 
 Las escalas de los PID ampliados (0x70, 0x78, 0x7A, 0x7C) están marcadas
 `verified: false`: su layout varía entre fabricantes y no se pudo verificar
