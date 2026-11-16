@@ -134,3 +134,36 @@ describe('importador XDF', () => {
     expect(importarXdf(sinZ).tablas).toEqual([]);
   });
 });
+
+import { defMe75Referencia } from './me75';
+
+describe('endianness desde la bandera XDF y definición ME7.5', () => {
+  it('la bandera 0x02 marca little-endian (ME7)', () => {
+    const le = `<XDFTABLE><title>t</title><XDFAXIS id="z">
+      <EMBEDDEDDATA mmedtypeflags="0x02" mmedaddress="0x0" mmedelementsizebits="16" mmedrowcount="1" mmedcolcount="1"/>
+      <MATH equation="X"/></XDFAXIS></XDFTABLE>`;
+    const be = le.replace('0x02', '0x00');
+    expect(importarXdf(le).tablas[0]!.bigEndian).toBe(false);
+    expect(importarXdf(be).tablas[0]!.bigEndian).toBe(true);
+  });
+
+  it('la definición ME7.5 trae los mapas canónicos, little-endian', () => {
+    const ids = defMe75Referencia.tablas.map((t) => t.id);
+    expect(ids).toContain('kfmirl');
+    expect(ids).toContain('kfzw');
+    expect(ids).toContain('ldrxn');
+    expect(ids).toContain('mlhfm');
+    expect(defMe75Referencia.tablas.every((t) => t.bigEndian === false)).toBe(true);
+  });
+
+  it('KFMIRL se lee little-endian sobre un volcado', () => {
+    // 16x16 de 16 bits en 0x1EFBE = 512 valores. Un volcado chico con el
+    // primer valor 0x0100 en LE (=1) y conversión 0.023438 → ~0.0234 %.
+    const kfmirl = defMe75Referencia.tablas.find((t) => t.id === 'kfmirl')!;
+    const dump = new Uint8Array(0x30000);
+    dump[0x1efbe] = 0x00; dump[0x1efbe + 1] = 0x01; // LE 16-bit = 0x0100 = 256
+    const leida = leerTabla(dump, compilarTabla(kfmirl));
+    expect(leida.crudos[0]![0]).toBe(256);
+    expect(leida.valores[0]![0]).toBeCloseTo(6.0, 1);
+  });
+});

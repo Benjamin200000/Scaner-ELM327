@@ -68,7 +68,9 @@ function ejeDef(eje: ReturnType<typeof parseEje>): EjeDef | undefined {
   if (dir === null) return undefined;
   const bits = (num(attr(eje.embedded!, 'mmedelementsizebits')) ?? 16) as 8 | 16 | 32;
   const flags = num(attr(eje.embedded!, 'mmedtypeflags')) ?? 0;
-  return { direccion: dir, bits, signed: (flags & 0x01) !== 0, bigEndian: true, conversion: eje.equation, unidad: eje.unidad };
+  // Bandera 0x02 = LSB primero (little-endian). Los Bosch ME7 (núcleo C167)
+  // son little-endian, así que esto importa para leer bien los valores.
+  return { direccion: dir, bits, signed: (flags & 0x01) !== 0, bigEndian: (flags & 0x02) === 0, conversion: eje.equation, unidad: eje.unidad };
 }
 
 export function importarXdf(xml: string, nombre = 'XDF importado'): Definicion {
@@ -99,7 +101,7 @@ export function importarXdf(xml: string, nombre = 'XDF importado'): Definicion {
       direccion: dir + baseOffset,
       bits,
       signed: (flags & 0x01) !== 0,
-      bigEndian: true,
+      bigEndian: (flags & 0x02) === 0,
       filas: Math.max(1, filas),
       columnas: Math.max(1, columnas),
       conversion: z.equation,

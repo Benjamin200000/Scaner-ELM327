@@ -302,6 +302,15 @@ qué celdas cambió un remap. Pantalla **Mapas (remap)**.
 **Es solo lectura.** No edita ni escribe flash: entender y comparar un remap,
 no aplicarlo. La escritura queda fuera por la misma razón de siempre.
 
+Incluye una **definición nativa de referencia para ME7.5 1.8T** con los mapas
+canónicos (KFMIRL par/carga, LDRXN límite de turbo, KFZW encendido, MLHFM
+caudalímetro, KRKTE inyección, LAMFA enriquecimiento), con sus escalas,
+dimensiones y unidades reales tomadas de una definición XDF de la comunidad
+(NefMoto, ECU 8E0909518AK). Las **direcciones son propias de ese ROM**: en la
+pantalla se puede editar la dirección de cada tabla hasta que el mapa tenga
+sentido sobre el volcado propio, que es como se adapta a otra ECU. ME7 es
+little-endian (núcleo C167), cosa que el lector y el importador respetan.
+
 Lo que verifiqué: la lectura de tablas, el endianness, el signo, la
 comparación y el importador XDF, con tests sobre volcados sintéticos. Lo que
 NO: que una definición real ubique bien los mapas de TU ECU (eso depende de que

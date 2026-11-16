@@ -5,6 +5,7 @@ import { importarXdf } from '@/core/tune/xdf';
 import { leerDefinicion, type TablaLeida, compararTabla } from '@/core/tune/apply';
 import { compilarTabla } from '@/core/tune/def';
 import { defSimulador } from '@/core/tune/nativas';
+import { defMe75Referencia } from '@/core/tune/me75';
 import { Button, Notice, Panel } from '../parts/Panel';
 
 /**
@@ -23,8 +24,11 @@ export function Mapas() {
   const [dump, setDump] = useState<Uint8Array | null>(null);
   const [dumpNombre, setDumpNombre] = useState('');
   const [modificado, setModificado] = useState<Uint8Array | null>(null);
+  const nativas: Definicion[] = [defSimulador, defMe75Referencia];
   const [def, setDef] = useState<Definicion>(defSimulador);
   const [sel, setSel] = useState(0);
+  /** Direcciones ajustadas a mano por tabla (id -> dirección), para adaptar a tu ROM. */
+  const [dirs, setDirs] = useState<Record<string, number>>({});
   const inpBin = useRef<HTMLInputElement>(null);
   const inpMod = useRef<HTMLInputElement>(null);
   const inpXdf = useRef<HTMLInputElement>(null);
@@ -33,9 +37,14 @@ export function Mapas() {
   const activo = dump ?? (lectura ? lectura.resultado.datos : null);
   const activoNombre = dump ? dumpNombre : lectura ? `Lectura · ${lectura.resultado.region.label}` : '';
 
+  // Se aplican las direcciones ajustadas antes de leer.
+  const defAplicada = useMemo<Definicion>(() => ({
+    ...def,
+    tablas: def.tablas.map((t) => (dirs[t.id] !== undefined ? { ...t, direccion: dirs[t.id]! } : t)),
+  }), [def, dirs]);
   const tablas = useMemo<TablaLeida[]>(
-    () => (activo ? leerDefinicion(activo, def) : []),
-    [activo, def],
+    () => (activo ? leerDefinicion(activo, defAplicada) : []),
+    [activo, defAplicada],
   );
   const tabla = tablas[sel] ?? null;
 
@@ -75,16 +84,31 @@ export function Mapas() {
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <span className="label">Definición</span>
-            <span style={{ fontSize: 12 }}>{def.nombre} · {def.tablas.length} tablas</span>
+            <select value={nativas.some((d) => d.nombre === def.nombre) ? def.nombre : '__xdf__'}
+              onChange={(e) => {
+                const d = nativas.find((x) => x.nombre === e.target.value);
+                if (d) { setDef(d); setSel(0); setDirs({}); }
+              }}
+              style={input}>
+              {nativas.map((d) => <option key={d.nombre} value={d.nombre}>{d.nombre}</option>)}
+              {!nativas.some((d) => d.nombre === def.nombre) && <option value="__xdf__">{def.nombre}</option>}
+            </select>
+            <span style={{ fontSize: 11.5, color: 'var(--color-ink-faint)' }}>{def.tablas.length} tablas</span>
             <input ref={inpXdf} type="file" accept=".xdf" hidden
               onChange={() => cargar(inpXdf, (b, n) => {
-                setDef(importarXdf(new TextDecoder().decode(b), n)); setSel(0);
+                setDef(importarXdf(new TextDecoder().decode(b), n)); setSel(0); setDirs({});
               })} />
             <Button onClick={() => inpXdf.current?.click()}>Importar XDF</Button>
-            {def.nombre !== defSimulador.nombre && (
-              <Button variant="ghost" onClick={() => { setDef(defSimulador); setSel(0); }}>Volver a la de demo</Button>
-            )}
           </div>
+          {def.nombre === defMe75Referencia.nombre && (
+            <Notice tone="warn" title="Las direcciones son de un ROM 1.8T de referencia">
+              Las escalas y dimensiones de cada mapa son correctas, pero las
+              direcciones corresponden a la ECU 8E0909518AK (un 1.8T). En tu ROM
+              están en otro lado. Ajustá la dirección de cada tabla abajo hasta
+              que el mapa tenga sentido sobre tu volcado. Necesita un volcado del
+              ROM completo.
+            </Notice>
+          )}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <span className="label">Comparar con</span>
             <input ref={inpMod} type="file" accept=".bin" hidden
@@ -138,10 +162,28 @@ export function Mapas() {
               <div style={{ overflowX: 'auto', padding: 12 }}>
                 <GrillaMapa tabla={tabla} cambiadas={celdasCambiadas} />
               </div>
-              <div style={{ padding: '0 12px 12px', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ padding: '0 12px 12px', display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'baseline' }}>
                 <Dato label="Mínimo" v={`${tabla.min.toFixed(tabla.def.decimales)} ${tabla.def.unidad}`} />
                 <Dato label="Máximo" v={`${tabla.max.toFixed(tabla.def.decimales)} ${tabla.def.unidad}`} />
-                <Dato label="Dirección" v={`0x${tabla.def.direccion.toString(16).toUpperCase()}`} />
+                <label style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                  <span className="label">Dirección</span>
+                  <input
+                    defaultValue={`0x${tabla.def.direccion.toString(16).toUpperCase()}`}
+                    key={tabla.def.id + tabla.def.direccion}
+                    onBlur={(e) => {
+                      const v = parseInt(e.target.value.trim(), 16);
+                      if (Number.isFinite(v)) setDirs((d) => ({ ...d, [tabla.def.id]: v }));
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                    className="num"
+                    style={{ ...input, width: 110, marginTop: 0 }}
+                  />
+                </label>
+                {dirs[tabla.def.id] !== undefined && (
+                  <Button variant="ghost" onClick={() => setDirs((d) => { const n = { ...d }; delete n[tabla.def.id]; return n; })}>
+                    Restablecer
+                  </Button>
+                )}
               </div>
             </Panel>
           )}
@@ -196,6 +238,11 @@ function GrillaMapa({ tabla, cambiadas }: { tabla: TablaLeida; cambiadas: Set<st
   );
 }
 
+const input: React.CSSProperties = {
+  padding: '6px 9px', marginTop: 2, background: 'var(--color-bg)',
+  color: 'var(--color-ink)', border: '1px solid var(--color-line)', borderRadius: 3,
+  fontSize: 12.5, fontFamily: 'inherit',
+};
 const th: React.CSSProperties = { padding: '3px 7px', fontWeight: 600, fontSize: 10.5 };
 const formatEje = (v: number): string => Number.isInteger(v) ? String(v) : v.toFixed(1);
 
