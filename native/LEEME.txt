@@ -1,0 +1,42 @@
+SCANER ELM327 — APLICACIÓN NATIVA DE WINDOWS
+
+1. Extrae el ZIP en una carpeta local. Abre ScanerELM327-x64.exe o
+   ScanerELM327-x86.exe. No requiere Node, navegador ni instalar .NET.
+   Los EXE incluyen .NET Windows Desktop; pueden extraer bibliotecas nativas
+   en la carpeta temporal del usuario durante el primer arranque.
+2. Primero elige Simulador gasolina o diésel y pulsa Conectar.
+3. Instala los drivers oficiales del adaptador antes de conectar hardware:
+   - ELM327 Bluetooth Classic: emparejar en Windows y usar su COM saliente.
+     Selecciona el baud rate indicado por el fabricante del adaptador.
+   - KKL USB K-Line: COM del driver FTDI/CH340; KW1281, normalmente 10400 baud.
+     HEX-V2/HEX-NET de Ross-Tech no equivalen a un cable KKL/COM.
+   - Autel J2534: instala el paquete oficial Autel. Elige la DLL detectada
+     o selecciónala por archivo. La arquitectura del EXE debe coincidir con
+     la DLL. Una DLL de 32 bits requiere EXE x86 en Windows 11 de 64 bits.
+4. El transporte J2534 de esta versión usa ISO15765 CAN, 11/29 bits,
+   250/500 kbit/s. TX/RX son direcciones hex; 7E0/7E8 es un ejemplo,
+   no una identificación universal de ECU. Otros protocolos que anuncie el
+   driver Autel no quedan implementados solo por aparecer en su catálogo.
+5. Lee datos, identidad, fallas y monitores. Guarda sesión antes de borrar
+   códigos: el borrado también reinicia monitores y datos congelados.
+6. Lectura ECU: UDS 0x23 manual sobre J2534, sesión extendida, sin solicitar
+   llaves ni escribir flash. Usa direcciones documentadas para esa ECU.
+   Las lecturas incompletas se conservan como parciales, con manifiesto.
+7. Mapas: abre una copia BIN e importa su XDF correspondiente. Puedes ver,
+   comparar y editar valores crudos y exportar una copia con SHA-256 y
+   registro de cambios. La referencia ME7.5 1.8T NO es un perfil para ME3.7.
+   No se corrigen checksums ni se programa flash. Los BIN editados están
+   marcados NO VALIDADOS PARA PROGRAMACIÓN.
+8. Historial: %LOCALAPPDATA%\ScanerELM327\sesiones. Los datos quedan locales.
+   Imprimir informe permite elegir Microsoft Print to PDF si está instalado.
+
+REQUISITOS Y VALIDACIÓN
+Objetivo: Windows 11 (Windows 11 solo existe como sistema de 64 bits; puede
+correr estas aplicaciones x86 y x64). Las DLL J2534 deben coincidir con la
+arquitectura del proceso. No se incluye ni se redistribuye ningún driver.
+Los EXE no están firmados con un certificado de editor.
+Consulta native/docs/COBERTURA.md y VALIDACION.md en el repositorio:
+compilar un EXE no acredita compatibilidad con un vehículo concreto.
+El workflow "Windows nativo x86 y x64" comprueba controles nativos y FFI
+con una DLL simulada en Windows, y genera los ZIP como artefactos.
+La prueba sobre Autel, KKL, ELM327 y el Golf requiere esos equipos físicos.

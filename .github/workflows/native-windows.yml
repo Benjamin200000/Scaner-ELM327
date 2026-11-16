@@ -1,0 +1,67 @@
+name: Windows nativo x86 y x64
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['native/**', 'scripts/export-native-knowledge.mjs', '.github/workflows/native-windows.yml']
+  pull_request:
+    paths: ['native/**', 'scripts/export-native-knowledge.mjs', '.github/workflows/native-windows.yml']
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet run --project native/Scaner.Core.Tests -c Release
+  windows:
+    needs: core
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+      - name: Compilar biblioteca J2534 de prueba (sin hardware)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force native/artifacts | Out-Null
+          cl /nologo /LD /W4 /WX native/tests/fake_j2534.c /link /OUT:native/artifacts/fake-j2534.dll
+          if ($LASTEXITCODE -ne 0) { throw 'Falló la DLL de prueba' }
+      - name: Publicar EXE independiente
+        shell: pwsh
+        run: ./native/build.ps1 -Architecture '${{ matrix.arch }}'
+      - name: Probar controles nativos, simulador y ABI J2534
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $exe=(Resolve-Path 'release/native/${{ matrix.arch }}/ScanerELM327-${{ matrix.arch }}.exe').Path
+          $result=Join-Path $PWD 'native/artifacts/self-test-${{ matrix.arch }}.json'
+          $dll=(Resolve-Path 'native/artifacts/fake-j2534.dll').Path
+          $arguments=@('--self-test', ('"'+$result+'"'), '--fake-j2534', ('"'+$dll+'"'))
+          $process=Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
+          if (-not $process.WaitForExit(90000)) { $process.Kill(); throw 'Timeout de la prueba nativa' }
+          if ($process.ExitCode -ne 0) { if (Test-Path $result) { Get-Content $result }; throw 'Falló la prueba nativa' }
+          $report=Get-Content $result -Raw | ConvertFrom-Json
+          if (-not $report.passed -or $report.j2534Checks -ne 3 -or $report.nativeTabs -lt 14) { throw 'Prueba incompleta' }
+          Get-Content $result
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ScanerELM327-nativo-${{ matrix.arch }}
+          path: |
+            release/ScanerELM327-nativo-${{ matrix.arch }}.zip
+            native/artifacts/self-test-*
+          if-no-files-found: error
+          retention-days: 30

@@ -1,5 +1,12 @@
 # Scaner-ELM327
 
+## Aplicación nativa para Windows
+
+La versión de escritorio C#/.NET tiene interfaz nativa, sin navegador ni WebView, y publicaciones independientes x86/x64. Consulta [instalación y compilación](native/README.md), [compatibilidad y funciones pendientes](native/docs/COBERTURA.md) y [validación](native/docs/VALIDACION.md). Los ZIP se generan en el workflow **Windows nativo x86 y x64**.
+
+La aplicación web y el agente que se describen a continuación se conservan como implementación original. El empaquetado Node de la sección final es distinto de la aplicación nativa.
+
+
 Plataforma web de diagnóstico automotriz. Se conecta al vehículo mediante
 interfaces ELM327 y presenta lectura de parámetros, códigos de falla e
 interpretación asistida.
