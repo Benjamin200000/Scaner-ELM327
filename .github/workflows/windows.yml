@@ -10,6 +10,7 @@ on:
       - 'agent/**'
       - 'windows/**'
       - 'scripts/empaquetar-windows.mjs'
+      - 'package-lock.json'
       - '.github/workflows/windows.yml'
 
 permissions:
