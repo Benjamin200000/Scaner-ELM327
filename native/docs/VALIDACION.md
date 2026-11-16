@@ -24,4 +24,6 @@ Un workflow escrito o enviado a GitHub **no demuestra que haya terminado correct
 
 ## Evidencia local de esta revisión
 
-Se ejecutaron 57 pruebas del núcleo: 57 aprobadas, 0 fallidas. La compilación Release pasó sin errores ni advertencias. Se publicaron ambos EXE self-contained desde Linux y se comprobaron sus formatos PE x86/x64. Esto no constituye una ejecución de Windows ni una prueba del hardware real.
+Se ejecutaron 62 pruebas del núcleo: 62 aprobadas, 0 fallidas. La compilación Release pasó sin errores ni advertencias. Se publicaron ambos EXE self-contained desde Linux y se comprobaron sus formatos PE x86/x64. Esto no constituye una ejecución de Windows ni una prueba del hardware real.
+
+La suite web original también se ejecutó: 271 pruebas aprobadas, sin fallas. La lectura nativa por subida 0x35/0x36/0x37 se comprobó con vuelta del contador por 0x00, rechazo de secuencias incorrectas y bloques vacíos, además de conservar lecturas parciales.

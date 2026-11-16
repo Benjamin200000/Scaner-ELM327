@@ -19,7 +19,7 @@ SCANER ELM327 — APLICACIÓN NATIVA DE WINDOWS
    driver Autel no quedan implementados solo por aparecer en su catálogo.
 5. Lee datos, identidad, fallas y monitores. Guarda sesión antes de borrar
    códigos: el borrado también reinicia monitores y datos congelados.
-6. Lectura ECU: UDS 0x23 manual sobre J2534, sesión extendida, sin solicitar
+6. Lectura ECU: UDS 0x23 manual o subida 0x35/0x36/0x37 sobre J2534, sesión extendida, sin solicitar
    llaves ni escribir flash. Usa direcciones documentadas para esa ECU.
    Las lecturas incompletas se conservan como parciales, con manifiesto.
 7. Mapas: abre una copia BIN e importa su XDF correspondiente. Puedes ver,

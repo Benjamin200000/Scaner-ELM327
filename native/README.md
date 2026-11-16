@@ -4,7 +4,7 @@ Aplicación C#/.NET 10 con Windows Forms. La interfaz utiliza controles de Windo
 
 ## Descargar y usar
 
-En GitHub → **Actions → Windows nativo x86 y x64**, abre una ejecución correcta y descarga el artefacto `ScanerELM327-nativo-x64` o `ScanerELM327-nativo-x86`. Extrae el ZIP y ejecuta el EXE. GitHub conserva estos artefactos durante 30 días; el código y el procedimiento de compilación quedan en Git. No se añaden binarios de más de 100 MB al historial de Git.
+En GitHub → **Releases**, las etiquetas `native-v*` publican los ZIP después de pasar las pruebas Windows. Como alternativa: **Actions → Windows nativo x86 y x64**, abre una ejecución correcta y descarga el artefacto `ScanerELM327-nativo-x64` o `ScanerELM327-nativo-x86`. Extrae el ZIP y ejecuta el EXE. GitHub conserva estos artefactos durante 30 días; el código y el procedimiento de compilación quedan en Git. No se añaden binarios de más de 100 MB al historial de Git.
 
 Consulta [LEEME.txt](LEEME.txt), [cobertura](docs/COBERTURA.md), [validación](docs/VALIDACION.md) y [fuentes investigadas](docs/FUENTES.md).
 

@@ -20,7 +20,7 @@
 | Interpretación | Siete reglas portadas; datos ausentes, combustible y cilindrada se muestran como requisitos pendientes |
 | Conocimiento | 11 DTC con causas y pruebas, 12 rangos, 36 fallas VAG y grupos del proyecto, consultables dentro del EXE |
 | Lectura de ECU | UDS 0x23 manual por J2534, progreso, cancelación, validación de longitud y manifiesto de lectura parcial |
-| RequestUpload / 0x35 | No trasladado al motor nativo actual; conservar implementación web y pruebas |
+| RequestUpload / 0x35 | Sesión extendida, tamaño negociado, TransferData con contador y finalización; progreso y cancelación |
 | Seguridad ECU | No se adivinan llaves ni se incluyen módulos comerciales o algoritmos universales |
 | Mapas | BIN/XDF entero 8/16/32 bits, signo/endian, fórmulas aritméticas, edición cruda, comparación y exportación con SHA-256 |
 | Referencia ME7.5 | Se conserva la definición de referencia del ROM 1.8T y la demostración; selección explícita, sin aplicar al Golf automáticamente |
