@@ -161,5 +161,10 @@ for (const carpeta of carpetas) {
     console.log(`   ${zip}`);
   }
 }
-rmSync(TRABAJO, { recursive: true, force: true });
+try {
+  rmSync(TRABAJO, { recursive: true, force: true });
+} catch {
+  // En Windows un módulo del empaquetador sigue cargado en este proceso y
+  // no se puede borrar. Es una carpeta temporal: se pisa la próxima vez.
+}
 console.log('\nListo.');
