@@ -1,5 +1,6 @@
 import koffi from 'koffi';
 import { execFileSync } from 'node:child_process';
+import { closeSync, openSync, readSync } from 'node:fs';
 
 /**
  * Enlace con una biblioteca J2534 (PassThru 04.04).
@@ -346,6 +347,45 @@ export class DispositivoJ2534 {
 }
 
 /**
+ * Lee del encabezado PE para qué arquitectura está compilada una DLL.
+ *
+ * Importa porque un proceso de 64 bits no puede cargar una DLL de 32 bits (ni
+ * al revés), y la mayoría de las DLL J2534 de fabricante son de 32 bits.
+ * Devuelve 'ia32', 'x64', 'arm64' o null si no se pudo determinar.
+ */
+export function arquitecturaDll(ruta) {
+  let fd;
+  try {
+    fd = openSync(ruta, 'r');
+    const cab = Buffer.alloc(64);
+    if (readSync(fd, cab, 0, 64, 0) < 64 || cab.readUInt16LE(0) !== 0x5a4d) return null;
+    const pe = Buffer.alloc(6);
+    if (readSync(fd, pe, 0, 6, cab.readUInt32LE(0x3c)) < 6) return null;
+    if (pe.readUInt32LE(0) !== 0x00004550) return null;
+    const maquina = pe.readUInt16LE(4);
+    return maquina === 0x014c ? 'ia32' : maquina === 0x8664 ? 'x64' : maquina === 0xaa64 ? 'arm64' : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+const BITS = { ia32: '32 bits', x64: '64 bits', arm64: 'ARM64' };
+
+/**
+ * Si la DLL no es de la misma arquitectura que este proceso, devuelve el
+ * texto que explica qué hacer; si es compatible o no se sabe, null.
+ */
+export function avisoArquitectura(ruta, propia = process.arch) {
+  const dll = arquitecturaDll(ruta);
+  if (dll === null || dll === propia) return null;
+  const otro = dll === 'ia32' ? 'ScanerELM327-32bits.exe' : 'ScanerELM327.exe';
+  return `La DLL es de ${BITS[dll] ?? dll} y este programa corre en ${BITS[propia] ?? propia}: ` +
+    `no se puede cargar. Cerrá esta ventana y abrí ${otro}.`;
+}
+
+/**
  * Busca las bibliotecas J2534 instaladas en Windows.
  *
  * El instalador de cada fabricante se registra bajo PassThruSupport.04.04.
@@ -374,7 +414,8 @@ export function buscarInstaladas() {
         const nombre = /Name\s+REG_SZ\s+(.+)/i.exec(salida)?.[1]?.trim();
         const dll = /FunctionLibrary\s+REG_SZ\s+(.+)/i.exec(salida)?.[1]?.trim();
         const proveedor = /Vendor\s+REG_SZ\s+(.+)/i.exec(salida)?.[1]?.trim();
-        if (dll) {
+        // Un proceso de 32 bits ve la misma clave por las dos raíces.
+        if (dll && !encontradas.some((e) => e.dll.toLowerCase() === dll.toLowerCase())) {
           encontradas.push({
             nombre: nombre ?? clave.split('\\').pop(),
             proveedor: proveedor ?? 'desconocido',

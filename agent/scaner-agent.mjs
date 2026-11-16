@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import { WebSocketServer } from 'ws';
+import { createServer } from 'node:http';
+import { spawn } from 'node:child_process';
 import { networkInterfaces } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { carpetaWebValida, crearManejadorWeb } from './lib/web.mjs';
 import { analizar, CODIGOS } from './lib/protocol.mjs';
 import { obtenerToken, rutaToken, tokenValido } from './lib/auth.mjs';
 import { abrir, enumerar } from './lib/interfaces.mjs';
@@ -41,10 +46,24 @@ Agente del escáner ELM327  v${VERSION}
                  hardware antes de pelearse con el adaptador.
   --j2534 <ruta> Usar esta biblioteca J2534. En Windows las instaladas se
                  descubren solas desde el registro.
+  --web <ruta>   Carpeta con la app web compilada, para servirla desde el
+                 mismo puerto. Si hay una carpeta "web" junto al agente (o
+                 "dist" en el repositorio) se usa sola.
+  --abrir        Abrir la app en el navegador al iniciar, ya enlazada.
+  --diagnostico  Comprobar que los módulos de puerto serie y J2534 cargan en
+                 este equipo, listar lo que se encuentra, y salir.
   --token        Mostrar el token y salir.
   --ayuda        Esta ayuda.
 `);
   process.exit(0);
+}
+
+function carpetaWeb() {
+  const aqui = dirname(fileURLToPath(import.meta.url));
+  return carpetaWebValida(valor('--web', null)) ??
+    carpetaWebValida(join(aqui, 'web')) ??
+    carpetaWebValida(join(aqui, '..', 'web')) ??
+    carpetaWebValida(join(aqui, '..', 'dist'));
 }
 
 const TOKEN = obtenerToken();
@@ -54,17 +73,36 @@ if (flag('--token')) {
   process.exit(0);
 }
 
+if (flag('--diagnostico')) {
+  process.exit(await diagnostico());
+}
+
 const PUERTO = Number(valor('--puerto', '8777'));
 const LAN = flag('--lan');
 const SIMULAR = flag('--simular');
 const J2534 = valor('--j2534', null);
 const HOST = LAN ? '0.0.0.0' : '127.0.0.1';
 
-const wss = new WebSocketServer({ host: HOST, port: PUERTO, maxPayload: 64 * 1024 });
+const ABRIR = flag('--abrir');
 
-wss.on('listening', () => {
+const WEB = carpetaWeb();
+
+// Un solo puerto para todo: HTTP sirve la app y el mismo servidor acepta el
+// WebSocket del agente. Así el programa completo es un proceso y una URL.
+const http = createServer(crearManejadorWeb(WEB));
+const wss = new WebSocketServer({ server: http, maxPayload: 64 * 1024 });
+http.listen(PUERTO, HOST);
+
+/** El token va en el fragmento: el navegador no lo manda al servidor ni queda en logs. */
+const urlApp = (host) => `http://${host}:${PUERTO}/#agente=${TOKEN}`;
+
+http.on('listening', () => {
   console.log(`\nAgente del escáner ELM327  v${VERSION}`);
   console.log(`Escuchando en  ws://${LAN ? direccionLan() : '127.0.0.1'}:${PUERTO}`);
+  if (WEB) {
+    console.log(`Programa       http://127.0.0.1:${PUERTO}`);
+    if (LAN) console.log(`Desde la red   ${urlApp(direccionLan())}`);
+  }
   console.log(`Token          ${TOKEN}`);
   console.log(`               (guardado en ${rutaToken})`);
   if (SIMULAR) console.log('Simulador      activo');
@@ -75,10 +113,36 @@ wss.on('listening', () => {
       '       El token es lo único que lo protege. No lo compartas.',
     );
   }
-  console.log('\nPegá la dirección y el token en la pantalla de Conexión de la app.\n');
+  if (WEB) {
+    console.log('\nDejá esta ventana abierta mientras uses el programa. Para salir, cerrala.\n');
+  } else {
+    console.log('\nPegá la dirección y el token en la pantalla de Conexión de la app.\n');
+  }
+  if (ABRIR && WEB) abrirNavegador(urlApp('127.0.0.1'));
 });
 
-wss.on('error', (err) => {
+function abrirNavegador(url) {
+  try {
+    const [cmd, argumentos] =
+      process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
+        : process.platform === 'darwin' ? ['open', [url]]
+          : ['xdg-open', [url]];
+    spawn(cmd, argumentos, { stdio: 'ignore', detached: true, windowsHide: true })
+      .on('error', () => console.log(`Abrí a mano: ${url}`))
+      .unref();
+  } catch {
+    console.log(`Abrí a mano: ${url}`);
+  }
+}
+
+http.on('error', (err) => {
+  if (err?.code === 'EADDRINUSE' && ABRIR && WEB) {
+    // Doble clic con el programa ya abierto: se reutiliza el que está corriendo.
+    console.log(`\nEl programa ya está abierto en el puerto ${PUERTO}. Abriendo el navegador.\n`);
+    abrirNavegador(urlApp('127.0.0.1'));
+    setTimeout(() => process.exit(0), 1500);
+    return;
+  }
   if (err?.code === 'EADDRINUSE') {
     console.error(`\nEl puerto ${PUERTO} ya está en uso. Probá con --puerto <otro>.\n`);
   } else {
@@ -227,6 +291,46 @@ wss.on('connection', (ws, req) => {
   });
 });
 
+/**
+ * Autocomprobación sin hardware: dice si este equipo puede usar puerto serie
+ * y J2534, que es lo que más falla al mover el programa a otra máquina.
+ */
+async function diagnostico() {
+  let fallas = 0;
+  const linea = (ok, texto) => console.log(`${ok ? '[ ok ]' : '[FALLA]'} ${texto}`);
+  console.log(`\nDiagnóstico  v${VERSION} · ${process.platform} ${process.arch} · Node ${process.versions.node}\n`);
+  try {
+    const { SerialPort } = await import('serialport');
+    const puertos = await SerialPort.list();
+    linea(true, `Módulo de puerto serie cargado. Puertos: ${puertos.length}`);
+    for (const p of puertos) console.log(`         ${p.path}  ${p.friendlyName ?? p.manufacturer ?? ''}`);
+  } catch (err) {
+    fallas++;
+    linea(false, `Módulo de puerto serie: ${err?.message ?? err}`);
+  }
+  try {
+    const koffi = (await import('koffi')).default;
+    linea(true, `Módulo J2534 (carga de DLL) cargado. koffi ${koffi.version}`);
+  } catch (err) {
+    fallas++;
+    linea(false, `Módulo J2534 (carga de DLL): ${err?.message ?? err}`);
+  }
+  const { buscarInstaladas, avisoArquitectura } = await import('./lib/j2534.mjs');
+  const dlls = buscarInstaladas();
+  if (process.platform === 'win32') {
+    console.log(`\nEquipos J2534 registrados en Windows: ${dlls.length}`);
+    for (const d of dlls) {
+      console.log(`   ${d.nombre} (${d.proveedor})\n      ${d.dll}`);
+      const aviso = avisoArquitectura(d.dll);
+      if (aviso) console.log(`      AVISO: ${aviso}`);
+    }
+    if (dlls.length === 0) console.log('   Ninguno. Instalá el software del fabricante del equipo.');
+  }
+  linea(carpetaWeb() !== null, 'App web incluida');
+  console.log(fallas === 0 ? '\nTodo en orden.\n' : `\n${fallas} problema(s).\n`);
+  return fallas === 0 ? 0 : 1;
+}
+
 function direccionLan() {
   for (const lista of Object.values(networkInterfaces())) {
     for (const i of lista ?? []) {
@@ -238,7 +342,8 @@ function direccionLan() {
 
 const cerrar = () => {
   console.log('\nCerrando el agente.');
-  wss.close(() => process.exit(0));
+  wss.close();
+  http.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1000).unref();
 };
 process.on('SIGINT', cerrar);

@@ -1,0 +1,66 @@
+name: Paquete Windows
+
+# Arma el paquete portable y lo prueba en un Windows real: que los dos .exe
+# arranquen, que carguen los módulos nativos (puerto serie y J2534) y que el
+# programa responda por HTTP y WebSocket contra el simulador.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'agent/**'
+      - 'windows/**'
+      - 'scripts/empaquetar-windows.mjs'
+      - '.github/workflows/windows.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  paquete:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm ci
+        working-directory: agent
+      - name: Armar el paquete
+        run: node scripts/empaquetar-windows.mjs
+      - name: Diagnóstico 64 bits
+        run: .\release\ScanerELM327\ScanerELM327.exe --diagnostico
+        env:
+          SCANER_SIN_PAUSA: '1'
+      - name: Diagnóstico 32 bits
+        run: .\release\ScanerELM327\ScanerELM327-32bits.exe --diagnostico
+        env:
+          SCANER_SIN_PAUSA: '1'
+      - name: Prueba de humo (64 y 32 bits)
+        shell: pwsh
+        env:
+          SCANER_SIN_PAUSA: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $puerto = 8790
+          foreach ($exe in 'ScanerELM327.exe', 'ScanerELM327-32bits.exe') {
+            Write-Host "== $exe"
+            $p = Start-Process -FilePath ".\release\ScanerELM327\$exe" `
+              -ArgumentList '--simular', '--puerto', $puerto -PassThru -NoNewWindow
+            try {
+              Start-Sleep -Seconds 4
+              $r = Invoke-WebRequest "http://127.0.0.1:$puerto/" -UseBasicParsing
+              if ($r.StatusCode -ne 200) { throw "HTTP $($r.StatusCode)" }
+              node windows/humo.mjs $puerto
+              if ($LASTEXITCODE -ne 0) { throw "humo falló en $exe" }
+            } finally {
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            }
+            $puerto++
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScanerELM327-windows
+          path: release/ScanerELM327-windows.zip
+          if-no-files-found: error

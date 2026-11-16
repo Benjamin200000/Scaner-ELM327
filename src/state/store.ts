@@ -258,6 +258,52 @@ function guardar(clave: string, valor: string): void {
   }
 }
 
+/**
+ * Enlace automático con el agente local.
+ *
+ * Cuando el programa se abre desde el propio agente (el .exe de Windows), la
+ * URL trae `#agente=<token>`. Con eso la app ya sabe dónde está el agente
+ * (el mismo host que sirvió la página) y con qué token, sin copiar nada a
+ * mano. El fragmento se borra enseguida para que no quede en el historial.
+ */
+export function enlaceDesdeUrl(
+  href: string,
+): { url: string; token: string } | null {
+  let u: URL;
+  try {
+    u = new URL(href);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  const m = /^#agente=([A-Za-z0-9_-]{16,128})$/.exec(u.hash);
+  if (!m?.[1]) return null;
+  return { url: `${u.protocol === 'https:' ? 'wss' : 'ws'}://${u.host}`, token: m[1] };
+}
+
+function aplicarEnlaceLocal(): boolean {
+  try {
+    const enlace = enlaceDesdeUrl(window.location.href);
+    if (!enlace) return false;
+    guardar('agentUrl', enlace.url);
+    guardar('agentToken', enlace.token);
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    return true;
+  } catch {
+    return false;
+  }
+}
+aplicarEnlaceLocal();
+
+/** Verdadero si esta página la sirvió el agente al que está enlazada. */
+export const ENLACE_LOCAL: boolean = (() => {
+  try {
+    return leer('agentUrl') === `ws://${window.location.host}` && (leer('agentToken') ?? '') !== '';
+  } catch {
+    return false;
+  }
+})();
+
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let cancelRequested = false;
 let vueltaEnCurso: Promise<void> | null = null;

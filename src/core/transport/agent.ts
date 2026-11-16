@@ -9,7 +9,7 @@ import {
  * Transporte contra el agente local.
  *
  * El agente corre en la notebook y expone por WebSocket lo que el navegador
- * no puede tocar: ELM327 Bluetooth Classic, cable K-Line y, más adelante,
+ * no puede tocar: ELM327 Bluetooth Classic, cable K-Line y
  * J2534. Desde acá arriba es un transporte como cualquier otro, así que el
  * driver del ELM327 y todo lo que está encima no cambian en nada.
  *

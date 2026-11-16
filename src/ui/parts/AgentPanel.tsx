@@ -1,4 +1,5 @@
-import { useApp } from '@/state/store';
+import { useEffect } from 'react';
+import { ENLACE_LOCAL, useApp } from '@/state/store';
 import { Button, Notice, Panel } from './Panel';
 
 /**
@@ -13,6 +14,13 @@ export function AgentPanel() {
     agentUrl, agentToken, agentInterfaces, agentInterfaceId, agentBusy, agentVersion,
     setAgentUrl, setAgentToken, setAgentInterfaceId, probeAgent, connect,
   } = useApp();
+
+  // Abierto desde el programa local: ya hay dirección y token, así que se
+  // buscan las interfaces sin pedirle nada al usuario.
+  useEffect(() => {
+    if (ENLACE_LOCAL) void probeAgent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const elegida = agentInterfaces.find((i) => i.id === agentInterfaceId) ?? null;
   const utiles = agentInterfaces.filter((i) => i.kind !== 'error');
@@ -31,8 +39,11 @@ export function AgentPanel() {
         <p style={{
           fontSize: 11.5, color: 'var(--color-ink-dim)', margin: 0, lineHeight: 1.55,
         }}>
+          {ENLACE_LOCAL && (
+            <><strong style={{ color: 'var(--color-ok)' }}>Programa local enlazado.</strong>{' '}</>
+          )}
           Alcanza lo que el navegador no puede tocar: ELM327 Bluetooth Classic,
-          cable K-Line y, más adelante, J2534. Si el agente corre en la
+          cable K-Line y equipos J2534. Si el agente corre en la
           notebook con <span className="num">--lan</span>, esta app puede usarse
           desde una tablet contra el adaptador enchufado allá.
         </p>

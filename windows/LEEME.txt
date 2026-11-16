@@ -1,0 +1,79 @@
+SCANER ELM327 — programa local para Windows
+===========================================
+
+CÓMO SE USA
+-----------
+1. Descomprimí TODO el .zip en una carpeta (por ejemplo C:\ScanerELM327).
+   No lo abras desde adentro del .zip: el .exe necesita la carpeta "app".
+2. Doble clic en  ScanerELM327.exe
+   Se abre una ventana negra (el motor del programa) y enseguida el
+   navegador con el programa, ya enlazado. No hace falta internet.
+3. En la pantalla "Conexión", panel "Agente local", aparecen las interfaces
+   que encontró: puertos COM (ELM327, cable KKL) y equipos J2534.
+4. Para salir, cerrá la ventana negra.
+
+La primera vez Windows puede mostrar "Windows protegió su PC" (SmartScreen)
+porque el .exe no está firmado: "Más información" -> "Ejecutar de todas
+formas". También puede preguntar el Firewall: para uso en esta misma PC
+no hace falta permitir nada.
+
+QUÉ ARCHIVO ABRIR
+-----------------
+ScanerELM327.exe          64 bits. El de todos los días: ELM327 y cable KKL.
+ScanerELM327-32bits.exe   32 bits. Para equipos J2534 cuya DLL es de 32 bits
+                          (la mayoría). Si el de 64 no puede cargar la DLL,
+                          el programa te lo avisa y te manda a este.
+Modo simulador.cmd        Sin hardware: agrega un ELM327 simulado para
+                          probar que todo funciona.
+Diagnostico.cmd           Comprueba que este equipo puede usar puerto serie
+                          y J2534, y lista lo que encuentra. Si algo no
+                          anda, empezá por acá.
+Usar desde tablet.cmd     Deja usar el programa desde un teléfono o tablet
+                          en la misma red Wi-Fi (muestra la dirección).
+
+LO QUE YA VIENE INCLUIDO
+------------------------
+- El programa completo (pantallas, códigos, datos en vivo, VAG, mapas…).
+- El motor (Node.js) dentro del .exe.
+- Los módulos nativos para Windows de puerto serie y de carga de DLL J2534,
+  en 32 y 64 bits.
+
+LO QUE TENÉS QUE INSTALAR VOS (no se puede incluir: es de cada fabricante)
+--------------------------------------------------------------------------
+ELM327 Bluetooth
+  Emparejalo en Windows (Configuración -> Bluetooth, PIN 1234 o 0000).
+  Windows crea un puerto "COM saliente"; ese es el que aparece en el
+  programa. No necesita driver aparte.
+
+ELM327 USB / cable KKL (VAG-COM 409.1)
+  Necesitan el driver del chip USB-serie del cable:
+    - FTDI (FT232):  ftdichip.com -> Drivers -> VCP
+    - CH340/CH341:   wch-ic.com   -> Downloads -> CH341SER
+    - CP210x:        silabs.com   -> CP210x VCP Drivers
+    - PL2303:        prolific.com.tw
+  Si no sabés cuál tiene, enchufalo y mirá en el Administrador de
+  dispositivos -> Puertos (COM y LPT). Windows 10/11 suele instalarlo solo.
+
+J2534 (Autel MaxiFlash u otro)
+  Instalá el software del fabricante (en Autel: "Maxi PC Suite" /
+  "MaxiFlash J2534 driver"). Ese instalador registra la DLL J2534 en
+  Windows y el programa la encuentra sola. Si no aparece en la lista,
+  abrí ScanerELM327-32bits.exe.
+
+LÍMITES QUE CONVIENE SABER
+--------------------------
+- Este programa solo LEE. No graba la memoria de la computadora del auto.
+- La lectura por J2534 y el cable KKL están probados contra simuladores,
+  todavía no contra el equipo real. Si algo falla, la pantalla "Terminal"
+  muestra el intercambio completo: guardalo para poder corregirlo.
+- Los valores de referencia son orientativos. Un dato fuera de rango no
+  confirma una pieza defectuosa.
+
+SI ALGO NO ANDA
+---------------
+- "El puerto 8777 ya está en uso": ya hay otra ventana del programa
+  abierta. Usala o cerrala.
+- No aparece el puerto COM: revisá el driver en el Administrador de
+  dispositivos, y que ningún otro programa (VCDS, etc.) lo tenga abierto.
+- El navegador no abre solo: entrá a mano a la dirección que muestra la
+  ventana negra.

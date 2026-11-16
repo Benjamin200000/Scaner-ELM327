@@ -1,6 +1,6 @@
 import { CODIGOS } from './protocol.mjs';
 import { ElmStub } from './elm-stub.mjs';
-import { buscarInstaladas } from './j2534.mjs';
+import { avisoArquitectura, buscarInstaladas } from './j2534.mjs';
 import { J2534ComoElm } from './j2534-elm.mjs';
 
 /**
@@ -45,7 +45,8 @@ export async function enumerar({ simular, j2534 }) {
       id: `j2534:${encontrada.dll}`,
       kind: 'j2534',
       label: `${encontrada.nombre} (J2534)`,
-      detail: `${encontrada.proveedor} · ${encontrada.dll}`,
+      detail: [encontrada.proveedor, encontrada.dll, avisoArquitectura(encontrada.dll)]
+        .filter(Boolean).join(' · '),
     });
   }
 
@@ -100,6 +101,8 @@ export async function enumerar({ simular, j2534 }) {
 export async function abrir(id, options, { simular }) {
   if (id.startsWith('j2534:')) {
     const ruta = id.slice('j2534:'.length);
+    const aviso = avisoArquitectura(ruta);
+    if (aviso) throw fallo(CODIGOS.falloAlAbrir, `No se pudo abrir el equipo J2534. ${aviso}`);
     let puente;
     try {
       puente = new J2534ComoElm(ruta);

@@ -180,3 +180,20 @@ describe('agente local', () => {
     await b.close();
   });
 });
+
+describe('enlace automático con el agente local', () => {
+  it('toma dirección y token del fragmento', async () => {
+    const { enlaceDesdeUrl } = await import('@/state/store');
+    expect(enlaceDesdeUrl('http://127.0.0.1:8777/#agente=abcdefghijklmnopqrstuvwxyz012345'))
+      .toEqual({ url: 'ws://127.0.0.1:8777', token: 'abcdefghijklmnopqrstuvwxyz012345' });
+    expect(enlaceDesdeUrl('http://192.168.1.20:9000/#agente=AAAAaaaa_-BBBBbbbb')?.url)
+      .toBe('ws://192.168.1.20:9000');
+  });
+  it('ignora fragmentos ajenos o mal formados', async () => {
+    const { enlaceDesdeUrl } = await import('@/state/store');
+    expect(enlaceDesdeUrl('http://127.0.0.1:8777/')).toBeNull();
+    expect(enlaceDesdeUrl('http://127.0.0.1:8777/#agente=corto')).toBeNull();
+    expect(enlaceDesdeUrl('http://127.0.0.1:8777/#agente=con espacios y <script>')).toBeNull();
+    expect(enlaceDesdeUrl('file:///C:/x/index.html#agente=abcdefghijklmnopqrstuvwxyz')).toBeNull();
+  });
+});
