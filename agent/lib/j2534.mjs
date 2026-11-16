@@ -380,9 +380,9 @@ const BITS = { ia32: '32 bits', x64: '64 bits', arm64: 'ARM64' };
 export function avisoArquitectura(ruta, propia = process.arch) {
   const dll = arquitecturaDll(ruta);
   if (dll === null || dll === propia) return null;
-  const otro = dll === 'ia32' ? 'ScanerELM327-32bits.exe' : 'ScanerELM327.exe';
+  const otro = dll === 'ia32' ? 'la versión de 32 bits del programa' : 'la versión de 64 bits del programa';
   return `La DLL es de ${BITS[dll] ?? dll} y este programa corre en ${BITS[propia] ?? propia}: ` +
-    `no se puede cargar. Cerrá esta ventana y abrí ${otro}.`;
+    `no se puede cargar. Cerrá el programa y abrí ${otro}.`;
 }
 
 /**

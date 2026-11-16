@@ -79,8 +79,8 @@ test('avisa qué .exe abrir cuando la DLL es de otra arquitectura', () => {
   const d64 = dllFalsa('b64.dll', 0x8664);
   assert.equal(avisoArquitectura(d32, 'ia32'), null);
   assert.equal(avisoArquitectura(d64, 'x64'), null);
-  assert.match(avisoArquitectura(d32, 'x64'), /ScanerELM327-32bits\.exe/);
-  assert.match(avisoArquitectura(d64, 'ia32'), /ScanerELM327\.exe/);
+  assert.match(avisoArquitectura(d32, 'x64'), /32 bits del programa/);
+  assert.match(avisoArquitectura(d64, 'ia32'), /64 bits del programa/);
   // Si no se puede saber, no se bloquea: que decida la carga real.
   assert.equal(avisoArquitectura(join(base, 'no-existe.dll'), 'x64'), null);
 });

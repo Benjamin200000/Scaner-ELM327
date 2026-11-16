@@ -1,7 +1,7 @@
 name: Paquete Windows
 
-# Arma el paquete portable y lo prueba en un Windows real: que los dos .exe
-# arranquen, que carguen los módulos nativos (puerto serie y J2534) y que el
+# Arma el paquete portable y lo prueba en un Windows real: que las dos apps
+# abran su ventana, que carguen los módulos nativos (puerto serie y J2534) y que el
 # programa responda por HTTP y WebSocket contra el simulador.
 on:
   workflow_dispatch:
@@ -9,6 +9,7 @@ on:
     paths:
       - 'agent/**'
       - 'windows/**'
+      - 'desktop/**'
       - 'scripts/empaquetar-windows.mjs'
       - 'package-lock.json'
       - '.github/workflows/windows.yml'
@@ -30,38 +31,53 @@ jobs:
         working-directory: agent
       - name: Armar el paquete
         run: node scripts/empaquetar-windows.mjs
-      - name: Diagnóstico 64 bits
-        run: .\release\ScanerELM327\ScanerELM327.exe --diagnostico
-        env:
-          SCANER_SIN_PAUSA: '1'
-      - name: Diagnóstico 32 bits
-        run: .\release\ScanerELM327\ScanerELM327-32bits.exe --diagnostico
-        env:
-          SCANER_SIN_PAUSA: '1'
-      - name: Prueba de humo (64 y 32 bits)
+      - name: Probar las dos apps (64 y 32 bits)
         shell: pwsh
-        env:
-          SCANER_SIN_PAUSA: '1'
         run: |
           $ErrorActionPreference = 'Stop'
           $puerto = 8790
-          foreach ($exe in 'ScanerELM327.exe', 'ScanerELM327-32bits.exe') {
-            Write-Host "== $exe"
-            $p = Start-Process -FilePath ".\release\ScanerELM327\$exe" `
-              -ArgumentList '--simular', '--puerto', $puerto -PassThru -NoNewWindow
+          foreach ($v in '64bits', '32bits') {
+            Write-Host "== $v"
+            $exe = ".\release\ScanerELM327-$v\ScanerELM327.exe"
+
+            # 1. Módulos nativos: puerto serie y carga de DLL (J2534)
+            $env:SCANER_DIAGNOSTICO = "$PWD\diag-$v.txt"
+            $d = Start-Process -FilePath $exe -PassThru -Wait
+            Remove-Item Env:SCANER_DIAGNOSTICO
+            Get-Content "diag-$v.txt"
+            if ($d.ExitCode -ne 0) { throw "diagnóstico falló en $v" }
+
+            # 2. La app abre su ventana, sirve el programa y habla con el simulador
+            $env:SCANER_CAPTURA = "$PWD\ventana-$v.png"
+            $p = Start-Process -FilePath $exe -ArgumentList '--simular', '--puerto', $puerto -PassThru
+            Remove-Item Env:SCANER_CAPTURA
             try {
-              Start-Sleep -Seconds 4
+              Start-Sleep -Seconds 3
               $r = Invoke-WebRequest "http://127.0.0.1:$puerto/" -UseBasicParsing
               if ($r.StatusCode -ne 200) { throw "HTTP $($r.StatusCode)" }
               node windows/humo.mjs $puerto
-              if ($LASTEXITCODE -ne 0) { throw "humo falló en $exe" }
+              if ($LASTEXITCODE -ne 0) { throw "humo falló en $v" }
+              $p.WaitForExit(20000) | Out-Null
             } finally {
-              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+              if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
             }
+            if (-not (Test-Path "ventana-$v.png")) { throw "la ventana de $v no llegó a dibujarse" }
             $puerto++
           }
       - uses: actions/upload-artifact@v4
         with:
-          name: ScanerELM327-windows
-          path: release/ScanerELM327-windows.zip
+          name: ScanerELM327-64bits
+          path: release/ScanerELM327-64bits.zip
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScanerELM327-32bits
+          path: release/ScanerELM327-32bits.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capturas
+          path: |
+            ventana-*.png
+            diag-*.txt

@@ -372,40 +372,35 @@ sin tener el vehículo delante. La pantalla de conexión además muestra un
 **veredicto del adaptador**: qué se puede hacer con el que está conectado y
 dónde está el techo.
 
-## Programa local para Windows (.exe)
+## Aplicación de escritorio para Windows (.exe)
 
-El programa completo se puede llevar a una PC con Windows como una carpeta
-portable, sin instalar Node ni nada más:
+El programa completo se empaqueta como una aplicación nativa con ventana
+propia (Electron): no abre el navegador ni necesita internet.
 
 ```bash
 npm ci && (cd agent && npm ci)
-node scripts/empaquetar-windows.mjs      # → release/ScanerELM327-windows.zip
+node scripts/empaquetar-windows.mjs
+# → release/ScanerELM327-64bits.zip   ELM327 y cable KKL
+# → release/ScanerELM327-32bits.zip   además, DLL J2534 de 32 bits
 ```
 
-El script corre en Linux, macOS o Windows. No compila binarios de Windows:
-toma `node.exe` del paquete npm oficial (`node-win-x64` / `node-win-x86`), le
-embebe el arranque (Node *single executable*) y usa los binarios prearmados
-que ya traen `serialport` y `koffi`.
+El script corre en Linux, macOS o Windows y no compila nada: baja Electron
+para Windows ya compilado y usa los binarios prearmados de `serialport` y
+`koffi`.
 
-Contenido del paquete:
+Cómo está hecha: `desktop/main.mjs` arranca el agente dentro del proceso de
+Electron (puerto serie, K-Line y J2534) y abre una ventana contra
+`http://127.0.0.1:<puerto>`, ya enlazada (el token viaja en el fragmento de la
+URL). La app y el agente son exactamente los mismos que en la versión web.
 
-| Archivo | Para qué |
-|---|---|
-| `ScanerELM327.exe` | 64 bits. ELM327 (Bluetooth/USB) y cable KKL. |
-| `ScanerELM327-32bits.exe` | 32 bits. Para DLL J2534 de 32 bits (la mayoría). |
-| `Diagnostico.cmd` | Comprueba puerto serie y J2534 en ese equipo. |
-| `Modo simulador.cmd` | ELM327 simulado, sin hardware. |
-| `Usar desde tablet.cmd` | Sirve el programa a la red local. |
-| `app/` | Agente, app web compilada y módulos nativos. |
-
-Al abrir el `.exe`, el agente sirve la app en `http://127.0.0.1:8777` y abre
-el navegador ya enlazado (el token viaja en el fragmento de la URL, que no se
-envía al servidor). Un solo proceso, sin internet.
+Hay dos versiones porque un proceso de 64 bits no puede cargar una DLL J2534
+de 32 bits, y la mayoría lo son. El programa lee el encabezado de la DLL y
+avisa cuál usar.
 
 **No incluido, y no se puede incluir:** los drivers de cada fabricante
 (FTDI/CH340 del cable, y el software J2534 del equipo, p. ej. Autel). Ver
 `windows/LEEME.txt`.
 
-El workflow `.github/workflows/windows.yml` arma el paquete en un Windows real
-y verifica que los dos `.exe` arranquen, carguen los módulos nativos y
-respondan contra el simulador. Lo que sigue sin verificar es el hardware real.
+El workflow `.github/workflows/windows.yml` arma las dos apps en un Windows
+real y verifica que abran su ventana, carguen los módulos nativos y respondan
+contra el simulador. Lo que sigue sin verificar es el hardware real.

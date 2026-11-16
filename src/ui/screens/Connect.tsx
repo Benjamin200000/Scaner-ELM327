@@ -23,7 +23,13 @@ export function Connect() {
     connect, disconnect, setManual, setSimProfile, setForcedProtocol, clearFault,
   } = useApp();
   const session = useApp((s) => s.session);
-  const transports = useMemo(() => detectTransports(), []);
+  // En la app de escritorio todo el hardware pasa por el agente integrado:
+  // los selectores de puerto del navegador no existen ahí.
+  const transports = useMemo(() => {
+    const todos = detectTransports();
+    const escritorio = typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent);
+    return escritorio ? todos.filter((t) => t.kind === 'mock') : todos;
+  }, []);
 
   const tInfo = session?.transport.info ?? null;
   const link = tInfo !== null

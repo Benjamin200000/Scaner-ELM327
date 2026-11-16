@@ -74,7 +74,10 @@ if (flag('--token')) {
 }
 
 if (flag('--diagnostico')) {
-  process.exit(await diagnostico());
+  const { diagnostico } = await import('./lib/diagnostico.mjs');
+  const r = await diagnostico({ version: VERSION, web: carpetaWeb() !== null });
+  console.log('\n' + r.lineas.join('\n') + '\n');
+  process.exit(r.fallas === 0 ? 0 : 1);
 }
 
 const PUERTO = Number(valor('--puerto', '8777'));
@@ -290,46 +293,6 @@ wss.on('connection', (ws, req) => {
     if (kline !== null) { await kline.cerrar().catch(() => {}); kline = null; }
   });
 });
-
-/**
- * Autocomprobación sin hardware: dice si este equipo puede usar puerto serie
- * y J2534, que es lo que más falla al mover el programa a otra máquina.
- */
-async function diagnostico() {
-  let fallas = 0;
-  const linea = (ok, texto) => console.log(`${ok ? '[ ok ]' : '[FALLA]'} ${texto}`);
-  console.log(`\nDiagnóstico  v${VERSION} · ${process.platform} ${process.arch} · Node ${process.versions.node}\n`);
-  try {
-    const { SerialPort } = await import('serialport');
-    const puertos = await SerialPort.list();
-    linea(true, `Módulo de puerto serie cargado. Puertos: ${puertos.length}`);
-    for (const p of puertos) console.log(`         ${p.path}  ${p.friendlyName ?? p.manufacturer ?? ''}`);
-  } catch (err) {
-    fallas++;
-    linea(false, `Módulo de puerto serie: ${err?.message ?? err}`);
-  }
-  try {
-    const koffi = (await import('koffi')).default;
-    linea(true, `Módulo J2534 (carga de DLL) cargado. koffi ${koffi.version}`);
-  } catch (err) {
-    fallas++;
-    linea(false, `Módulo J2534 (carga de DLL): ${err?.message ?? err}`);
-  }
-  const { buscarInstaladas, avisoArquitectura } = await import('./lib/j2534.mjs');
-  const dlls = buscarInstaladas();
-  if (process.platform === 'win32') {
-    console.log(`\nEquipos J2534 registrados en Windows: ${dlls.length}`);
-    for (const d of dlls) {
-      console.log(`   ${d.nombre} (${d.proveedor})\n      ${d.dll}`);
-      const aviso = avisoArquitectura(d.dll);
-      if (aviso) console.log(`      AVISO: ${aviso}`);
-    }
-    if (dlls.length === 0) console.log('   Ninguno. Instalá el software del fabricante del equipo.');
-  }
-  linea(carpetaWeb() !== null, 'App web incluida');
-  console.log(fallas === 0 ? '\nTodo en orden.\n' : `\n${fallas} problema(s).\n`);
-  return fallas === 0 ? 0 : 1;
-}
 
 function direccionLan() {
   for (const lista of Object.values(networkInterfaces())) {

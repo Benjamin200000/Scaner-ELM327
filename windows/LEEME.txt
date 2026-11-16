@@ -4,37 +4,50 @@ SCANER ELM327 — programa local para Windows
 CÓMO SE USA
 -----------
 1. Descomprimí TODO el .zip en una carpeta (por ejemplo C:\ScanerELM327).
-   No lo abras desde adentro del .zip: el .exe necesita la carpeta "app".
+   No lo abras desde adentro del .zip: el .exe necesita los archivos que
+   tiene al lado.
 2. Doble clic en  ScanerELM327.exe
-   Se abre una ventana negra (el motor del programa) y enseguida el
-   navegador con el programa, ya enlazado. No hace falta internet.
+   Se abre el programa en su propia ventana. No usa el navegador ni
+   necesita internet.
 3. En la pantalla "Conexión", panel "Agente local", aparecen las interfaces
    que encontró: puertos COM (ELM327, cable KKL) y equipos J2534.
-4. Para salir, cerrá la ventana negra.
+4. Para salir, cerrá la ventana.
 
 La primera vez Windows puede mostrar "Windows protegió su PC" (SmartScreen)
 porque el .exe no está firmado: "Más información" -> "Ejecutar de todas
-formas". También puede preguntar el Firewall: para uso en esta misma PC
-no hace falta permitir nada.
+formas".
 
-QUÉ ARCHIVO ABRIR
------------------
-ScanerELM327.exe          64 bits. El de todos los días: ELM327 y cable KKL.
-ScanerELM327-32bits.exe   32 bits. Para equipos J2534 cuya DLL es de 32 bits
-                          (la mayoría). Si el de 64 no puede cargar la DLL,
-                          el programa te lo avisa y te manda a este.
+Si querés un acceso directo: clic derecho sobre ScanerELM327.exe ->
+"Enviar a" -> "Escritorio (crear acceso directo)".
+
+QUÉ VERSIÓN USAR
+----------------
+Hay dos descargas, iguales salvo por la arquitectura:
+
+ScanerELM327-64bits   La de todos los días: ELM327 y cable KKL.
+ScanerELM327-32bits   Para equipos J2534 cuya DLL es de 32 bits (la
+                      mayoría). Si la de 64 no puede cargar la DLL, el
+                      programa lo avisa. La de 32 también sirve para
+                      ELM327 y KKL, así que si usás J2534 podés quedarte
+                      solo con esta.
+
+Dentro de cada carpeta:
+
+ScanerELM327.exe          El programa.
 Modo simulador.cmd        Sin hardware: agrega un ELM327 simulado para
                           probar que todo funciona.
-Diagnostico.cmd           Comprueba que este equipo puede usar puerto serie
-                          y J2534, y lista lo que encuentra. Si algo no
-                          anda, empezá por acá.
-Usar desde tablet.cmd     Deja usar el programa desde un teléfono o tablet
-                          en la misma red Wi-Fi (muestra la dirección).
+Usar desde tablet.cmd     Además de la ventana, deja usar el programa
+                          desde un teléfono o tablet en la misma red
+                          (menú Ayuda -> "Usar desde tablet o teléfono").
+
+Menú Ayuda -> "Diagnóstico del equipo": comprueba que esta PC puede usar
+puerto serie y J2534, y lista lo que encuentra. Si algo no anda, empezá
+por ahí.
 
 LO QUE YA VIENE INCLUIDO
 ------------------------
 - El programa completo (pantallas, códigos, datos en vivo, VAG, mapas…).
-- El motor (Node.js) dentro del .exe.
+- El motor del programa (Electron) con su propia ventana.
 - Los módulos nativos para Windows de puerto serie y de carga de DLL J2534,
   en 32 y 64 bits.
 
@@ -58,7 +71,7 @@ J2534 (Autel MaxiFlash u otro)
   Instalá el software del fabricante (en Autel: "Maxi PC Suite" /
   "MaxiFlash J2534 driver"). Ese instalador registra la DLL J2534 en
   Windows y el programa la encuentra sola. Si no aparece en la lista,
-  abrí ScanerELM327-32bits.exe.
+  usá la versión de 32 bits.
 
 LÍMITES QUE CONVIENE SABER
 --------------------------
@@ -71,9 +84,7 @@ LÍMITES QUE CONVIENE SABER
 
 SI ALGO NO ANDA
 ---------------
-- "El puerto 8777 ya está en uso": ya hay otra ventana del programa
-  abierta. Usala o cerrala.
 - No aparece el puerto COM: revisá el driver en el Administrador de
   dispositivos, y que ningún otro programa (VCDS, etc.) lo tenga abierto.
-- El navegador no abre solo: entrá a mano a la dirección que muestra la
-  ventana negra.
+- La ventana queda en blanco: menú Programa -> Recargar (F5).
+- Menú Ayuda -> "Diagnóstico del equipo" dice qué módulo falla.
