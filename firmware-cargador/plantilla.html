@@ -73,6 +73,7 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
     <div class="opciones">
       <label class="check"><input type="checkbox" id="manual"> Modo manual (si la placa no responde)</label>
       <label class="check"><input type="checkbox" id="todos"> Mostrar todos los puertos</label>
+      <label class="check"><input type="checkbox" id="borrar" checked> Borrar toda la memoria antes (deja la placa como nueva)</label>
     </div>
     <div id="pasos-manual" class="manual" hidden>
       <strong>Poné la placa en modo carga a mano, antes de pulsar Cargar:</strong>
@@ -92,7 +93,7 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
     <pre id="log"></pre>
   </section>
 
-  <p class="nota">Reemplaza todo lo que tenga el ESP32, incluida la configuración guardada. Antes de escribir
+  <p class="nota">Reemplaza el programa y la configuración que tenga el ESP32. Con "Borrar toda la memoria" marcado no queda nada del programa anterior. Antes de escribir
   se comprueba que la placa sea ESP32 original con 4 MB; después, el ESP32 verifica lo escrito.
   Imagen SHA-256 <code>__SHA__</code>.</p>
   <p class="nota">Si la lista de puertos está vacía: probá otro cable y, en Windows, el driver CP210x o CH340 del chip USB de la placa.</p>

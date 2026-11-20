@@ -14,6 +14,7 @@ const boton = $<HTMLButtonElement>('cargar');
 const velocidad = $<HTMLSelectElement>('velocidad');
 const manual = $<HTMLInputElement>('manual');
 const todos = $<HTMLInputElement>('todos');
+const borrarTodo = $<HTMLInputElement>('borrar');
 const pasosManual = $<HTMLDivElement>('pasos-manual');
 
 /** Chips USB-serie habituales en placas ESP32. Filtrar por ellos oculta los COM de Bluetooth. */
@@ -59,6 +60,7 @@ async function verificarImagen(): Promise<boolean> {
 async function cargar() {
   boton.disabled = true;
   velocidad.disabled = true;
+  borrarTodo.disabled = true;
   log.textContent = '';
   progreso(0);
   let transport: Transport | null = null;
@@ -94,6 +96,11 @@ async function cargar() {
       throw new Error(`La placa tiene ${flash} de flash y esta imagen necesita 4MB. No se escribió nada.`);
     }
 
+    if (borrarTodo.checked) {
+      aviso('info', 'Borrando toda la memoria (puede tardar hasta un minuto). No desconectes la placa.');
+      await loader.eraseFlash();
+      linea('> Memoria borrada por completo.');
+    }
     aviso('info', 'Escribiendo el firmware. No desconectes la placa.');
     await loader.writeFlash({
       fileArray: [{ data: imagen, address: 0x0 }],
@@ -137,6 +144,7 @@ async function cargar() {
     if (transport) await transport.disconnect().catch(() => {});
     boton.disabled = false;
     velocidad.disabled = false;
+    borrarTodo.disabled = false;
   }
 }
 
