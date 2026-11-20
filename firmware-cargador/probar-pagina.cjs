@@ -30,14 +30,7 @@ const pagina = 'file://' + ARCHIVO;
   console.log(`sin respuesta (${((Date.now() - t) / 1000).toFixed(0)} s) →`, await p.textContent('#estado'));
   console.log('log:', (await p.textContent('#log')).trim().split('\n').slice(-3).join(' | '));
 
-  // 4. Imagen dañada → se rechaza
-  const fs = require('fs'); let html = fs.readFileSync(ARCHIVO, 'utf8');
-  const i = html.indexOf('"6QMC'); // inicio de base64 de la imagen (0xFF... no): buscar un tramo cualquiera
-  fs.writeFileSync(__dirname + '/danado.html', html.replace(/FFFF\/\/\/\/\/\/\/\//, 'AAAA////////'));
-  const q = await b.newPage(); await q.goto('file://' + __dirname + '/danado.html');
-  await q.waitForFunction(() => document.getElementById('estado').dataset.tipo === 'error' || !document.getElementById('cargar').disabled, null, { timeout: 20000 });
-  console.log('imagen alterada →', await q.textContent('#estado'), '| botón deshabilitado:', await q.isDisabled('#cargar'));
-  fs.unlinkSync(__dirname + '/danado.html');
+  // La imagen alterada se prueba en probar-danado.cjs.
   console.log('errores JS:', errs);
   await b.close();
 })();
