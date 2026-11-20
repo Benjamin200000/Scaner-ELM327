@@ -1,0 +1,13 @@
+{
+  "name": "cargador-esp32",
+  "private": true,
+  "type": "module",
+  "description": "Página única que carga el firmware Golf Dashboard en un ESP32 desde Chrome/Edge (Web Serial)",
+  "scripts": {
+    "armar": "node armar.mjs ../firmware/downloads/GolfDashboard-ESP32-WROOM32-v3-4MB.bin Cargar-GolfDashboard-ESP32.html",
+    "typecheck": "tsc -p .",
+    "test": "node probar-md5.mjs"
+  },
+  "dependencies": { "esptool-js": "0.6.1" },
+  "devDependencies": { "@types/w3c-web-serial": "1.0.8", "esbuild": "0.25.10", "typescript": "5.9.3" }
+}

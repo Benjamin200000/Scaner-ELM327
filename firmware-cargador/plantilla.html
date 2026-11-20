@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cargar Golf Dashboard</title>
+<style>
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --ink: #16191d; --dim: #5b6470; --line: #d9dde3;
+  --accent: #2f6f9f; --ok: #2e7d4f; --err: #b3402e; --info: #2f6f9f;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #111417; --panel: #191d22; --ink: #e8ebee; --dim: #9aa3ad; --line: #2b3138;
+    --accent: #4a90c2; --ok: #4fb57a; --err: #e0735f; --info: #6aa8d6; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 720px; margin: 0 auto; padding: 28px 16px 48px; }
+h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: .01em; }
+.sub { color: var(--dim); margin: 0 0 22px; font-size: 13.5px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-bottom: 14px; }
+ol { margin: 0; padding-left: 20px; }
+li { margin: 4px 0; }
+.fila { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 12px 26px;
+  font-size: 16px; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+label { color: var(--dim); font-size: 13px; }
+select { font-size: 14px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+#estado { margin-top: 14px; padding: 10px 12px; border-radius: 8px; border-left: 4px solid var(--info);
+  background: color-mix(in srgb, var(--info) 10%, transparent); }
+#estado[data-tipo="ok"] { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+#estado[data-tipo="error"] { border-color: var(--err); background: color-mix(in srgb, var(--err) 12%, transparent); }
+.pista { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; flex: 1; min-width: 120px; }
+#barra { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+#porcentaje { font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; color: var(--dim); }
+pre { margin: 0; max-height: 240px; overflow: auto; font: 12px/1.5 ui-monospace, Consolas, monospace;
+  color: var(--dim); white-space: pre-wrap; word-break: break-word; }
+.nota { color: var(--dim); font-size: 13px; }
+#log:empty::before { content: "Acá aparece lo que responde la placa."; font-style: italic; }
+code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Cargar Golf Dashboard en el ESP32</h1>
+  <p class="sub">Firmware v3 para ESP32-WROOM-32 de 4 MB · incluido en este archivo · no necesita internet</p>
+
+  <section>
+    <ol>
+      <li>Abrí este archivo con <strong>Chrome</strong> o <strong>Edge</strong> en un computador.</li>
+      <li>Enchufá el ESP32 con un cable USB <strong>de datos</strong>. Cerrá Arduino IDE si está abierto.</li>
+      <li>Pulsá <strong>Cargar</strong> y elegí el puerto de la placa (CP210x, CH340 o USB Serial).</li>
+      <li>Esperá al 100 %. La placa se reinicia sola.</li>
+    </ol>
+  </section>
+
+  <section>
+    <div class="fila">
+      <button id="cargar" disabled>Cargar</button>
+      <label for="velocidad">Velocidad</label>
+      <select id="velocidad">
+        <option value="921600" selected>921600 (rápida)</option>
+        <option value="460800">460800</option>
+        <option value="115200">115200 (si falla la rápida)</option>
+      </select>
+    </div>
+    <div class="fila" style="margin-top:14px">
+      <div class="pista"><div id="barra"></div></div><span id="porcentaje">0 %</span>
+    </div>
+    <div id="estado" data-tipo="info">Cargando…</div>
+  </section>
+
+  <section>
+    <pre id="log"></pre>
+  </section>
+
+  <p class="nota">Reemplaza todo lo que tenga el ESP32, incluida la configuración guardada. Antes de escribir
+  se comprueba que la placa sea ESP32 original con 4 MB; después, el ESP32 verifica lo escrito.
+  Imagen SHA-256 <code>__SHA__</code>.</p>
+  <p class="nota">Si la lista de puertos está vacía: probá otro cable y, en Windows, el driver CP210x o CH340 del chip USB de la placa.</p>
+</main>
+<script>__CODE__</script>
+</body>
+</html>
