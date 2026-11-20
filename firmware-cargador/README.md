@@ -35,6 +35,6 @@ npm run typecheck && npm test
 npm run armar
 ```
 
-`probar-pagina.cjs` y `probar-danado.cjs` prueban la página en Chromium con
+`probar-pagina.cjs`, `probar-danado.cjs` y `probar-manual.cjs` (con un ESP32 simulado que responde sincronización e identificación del chip) prueban la página en Chromium con
 puertos simulados: carga, cancelación, placa que no responde e imagen
 alterada. No reemplazan una carga en una placa real.

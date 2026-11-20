@@ -39,6 +39,10 @@ pre { margin: 0; max-height: 240px; overflow: auto; font: 12px/1.5 ui-monospace,
   color: var(--dim); white-space: pre-wrap; word-break: break-word; }
 .nota { color: var(--dim); font-size: 13px; }
 #log:empty::before { content: "Acá aparece lo que responde la placa."; font-style: italic; }
+.opciones { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 14px; }
+.check { display: flex; gap: 6px; align-items: center; color: var(--ink); font-size: 14px; cursor: pointer; }
+.manual { margin-top: 12px; padding: 12px 14px; border-radius: 8px; border: 1px dashed var(--line); }
+.manual ol { margin-top: 6px; }
 code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
 </style>
 </head>
@@ -51,7 +55,7 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
     <ol>
       <li>Abrí este archivo con <strong>Chrome</strong> o <strong>Edge</strong> en un computador.</li>
       <li>Enchufá el ESP32 con un cable USB <strong>de datos</strong>. Cerrá Arduino IDE si está abierto.</li>
-      <li>Pulsá <strong>Cargar</strong> y elegí el puerto de la placa (CP210x, CH340 o USB Serial).</li>
+      <li>Pulsá <strong>Cargar</strong> y elegí el puerto de la placa (CP210x, CH340 o USB Serial). Los puertos Bluetooth, como el del ELM327, se ocultan para no confundirlos.</li>
       <li>Esperá al 100 %. La placa se reinicia sola.</li>
     </ol>
   </section>
@@ -65,6 +69,18 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
         <option value="460800">460800</option>
         <option value="115200">115200 (si falla la rápida)</option>
       </select>
+    </div>
+    <div class="opciones">
+      <label class="check"><input type="checkbox" id="manual"> Modo manual (si la placa no responde)</label>
+      <label class="check"><input type="checkbox" id="todos"> Mostrar todos los puertos</label>
+    </div>
+    <div id="pasos-manual" class="manual" hidden>
+      <strong>Poné la placa en modo carga a mano, antes de pulsar Cargar:</strong>
+      <ol>
+        <li>Mantené apretado <strong>BOOT</strong> (a veces dice IO0).</li>
+        <li>Sin soltar BOOT, tocá y soltá <strong>EN</strong> (a veces dice RST).</li>
+        <li>Soltá BOOT. La placa queda esperando; ahora pulsá <strong>Cargar</strong>.</li>
+      </ol>
     </div>
     <div class="fila" style="margin-top:14px">
       <div class="pista"><div id="barra"></div></div><span id="porcentaje">0 %</span>

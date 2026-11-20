@@ -12,6 +12,17 @@ const barra = $<HTMLDivElement>('barra');
 const porcentaje = $<HTMLSpanElement>('porcentaje');
 const boton = $<HTMLButtonElement>('cargar');
 const velocidad = $<HTMLSelectElement>('velocidad');
+const manual = $<HTMLInputElement>('manual');
+const todos = $<HTMLInputElement>('todos');
+const pasosManual = $<HTMLDivElement>('pasos-manual');
+
+/** Chips USB-serie habituales en placas ESP32. Filtrar por ellos oculta los COM de Bluetooth. */
+const PUENTES: Record<number, string> = {
+  0x10c4: 'Silicon Labs CP210x', 0x1a86: 'WCH CH340/CH9102', 0x0403: 'FTDI',
+  0x067b: 'Prolific PL2303', 0x303a: 'Espressif USB nativo',
+};
+const actualizarManual = () => { pasosManual.hidden = !manual.checked; };
+manual.addEventListener('change', actualizarManual);
 
 function escribir(texto: string) {
   log.textContent += texto;
@@ -53,7 +64,14 @@ async function cargar() {
   let transport: Transport | null = null;
   try {
     aviso('info', 'Elegí el puerto de la placa en la ventana del navegador…');
-    const port = await navigator.serial.requestPort();
+    const port = await navigator.serial.requestPort(
+      todos.checked ? {} : { filters: Object.keys(PUENTES).map((v) => ({ usbVendorId: Number(v) })) },
+    );
+    const info = port.getInfo();
+    if (info.usbVendorId === undefined) {
+      throw new Error('PUERTO_BLUETOOTH');
+    }
+    linea(`> Puerto USB: ${PUERTOS_NOMBRE(info.usbVendorId)} (VID 0x${info.usbVendorId.toString(16).padStart(4, '0')})`);
     transport = new Transport(port, false);
     const loader = new ESPLoader({
       transport,
@@ -61,8 +79,10 @@ async function cargar() {
       terminal: { clean: () => { log.textContent = ''; }, writeLine: linea, write: escribir },
     });
 
-    aviso('info', 'Conectando con el ESP32…');
-    const chip = await loader.main();
+    aviso('info', manual.checked
+      ? 'Modo manual: hablando con la placa sin reiniciarla…'
+      : 'Conectando con el ESP32… (la placa se reinicia sola en modo carga)');
+    const chip = await loader.main(manual.checked ? 'no_reset' : 'default_reset');
     linea(`\n> Chip detectado: ${chip}`);
     if (loader.chip.CHIP_NAME !== 'ESP32') {
       throw new Error(`Esta imagen es para ESP32 original y la placa es ${loader.chip.CHIP_NAME}. No se escribió nada.`);
@@ -88,14 +108,26 @@ async function cargar() {
     progreso(100);
     linea('> Escritura verificada por el ESP32 (MD5).');
     await loader.after('hard_reset');
-    aviso('ok', 'Listo. El ESP32 se reinició con el firmware nuevo. Ya podés desenchufarlo.');
+    aviso('ok', manual.checked
+      ? 'Listo. Pulsá EN/RST una vez para que arranque el firmware nuevo.'
+      : 'Listo. El ESP32 se reinició con el firmware nuevo. Ya podés desenchufarlo.');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     linea(`\n> ERROR: ${msg}`);
-    if (/No port selected|cancel/i.test(msg)) {
-      aviso('error', 'No se eligió ningún puerto. Si la lista estaba vacía, revisá el cable USB y el driver.');
+    if (msg === 'PUERTO_BLUETOOTH') {
+      aviso('error', 'Ese puerto es Bluetooth, no el USB de la placa (puede ser el ELM327 emparejado). Pulsá Cargar y elegí el que dice CP210x, CH340 o USB.');
+    } else if (/No port selected|cancel/i.test(msg)) {
+      aviso('error', todos.checked
+        ? 'No se eligió ningún puerto. Si la lista estaba vacía, revisá el cable USB (que sea de datos) y el driver.'
+        : 'No se eligió ningún puerto. Si la placa no aparecía, marcá "Mostrar todos los puertos" y probá de nuevo; si sigue sin aparecer, revisá el cable USB y el driver.');
     } else if (/Failed to connect|Timeout|sync/i.test(msg)) {
-      aviso('error', 'No respondió. Mantené BOOT, tocá EN/RST, soltá BOOT y volvé a pulsar Cargar.');
+      if (!manual.checked) {
+        manual.checked = true;
+        actualizarManual();
+        aviso('error', 'La placa no entró sola en modo carga. Activé el modo manual: seguí los 3 pasos de abajo y volvé a pulsar Cargar.');
+      } else {
+        aviso('error', 'Sigue sin responder. Repetí los 3 pasos (BOOT apretado mientras tocás EN). Si nunca responde: otro cable USB, otro puerto del PC, o cerrá Arduino IDE.');
+      }
     } else if (/Failed to open|already open|in use/i.test(msg)) {
       aviso('error', 'El puerto está ocupado. Cerrá Arduino IDE, monitores serie u otras pestañas que lo usen.');
     } else {
@@ -106,6 +138,10 @@ async function cargar() {
     boton.disabled = false;
     velocidad.disabled = false;
   }
+}
+
+function PUERTOS_NOMBRE(vid: number): string {
+  return PUENTES[vid] ?? 'chip USB-serie';
 }
 
 async function iniciar() {
