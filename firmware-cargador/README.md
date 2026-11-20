@@ -1,6 +1,11 @@
 # Cargador web del ESP32 (sin instalar programas)
 
-Genera `Cargar-GolfDashboard-ESP32.html`: un solo archivo con el firmware
+**Para usarlo:** abrí `Cargar-GolfDashboard-ESP32.html` en GitHub, pulsá
+**Download raw file** (ícono de descarga, arriba a la derecha), y abrí el
+archivo descargado con doble clic en Chrome o Edge. Verlo dentro de GitHub
+solo muestra el código: hay que descargarlo.
+
+`Cargar-GolfDashboard-ESP32.html`: un solo archivo con el firmware
 Golf Dashboard incluido. Se abre con doble clic en Chrome o Edge, se pulsa
 **Cargar**, se elige el puerto de la placa y listo. No usa internet ni
 páginas externas, y no hay que escribir direcciones de memoria.
@@ -21,7 +26,7 @@ configuración guardada (NVS, 0x9000) sí queda dentro y se borra.
 
 ## Armar
 
-La imagen está en `firmware/downloads/` de la rama `main`.
+Para regenerarlo (la imagen está en `firmware/downloads/` de la rama `main`):
 
 ```bash
 cd firmware-cargador
