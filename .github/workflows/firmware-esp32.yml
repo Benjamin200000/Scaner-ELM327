@@ -41,10 +41,18 @@ jobs:
 
       - name: Pruebas de la página del panel (iPhone simulado, sin ESP32)
         run: |
-          npm install --no-save --no-audit --no-fund playwright@1.56.1
-          npx playwright install --with-deps chromium
-          PLAYWRIGHT_MODULE="$PWD/node_modules/playwright" node firmware/tests/web-ui-test.cjs
-          PLAYWRIGHT_MODULE="$PWD/node_modules/playwright" node firmware/tests/server-sim.cjs
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund playwright@1.56.1
+          # Se usa el Chrome que ya trae el servidor de GitHub; si no está, solo el
+          # navegador de Playwright (sus paquetes de sistema no existen para todas las versiones de Ubuntu).
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          if [ -z "$CHROME" ]; then npx playwright install chromium; else export CHROMIUM_EXECUTABLE_PATH="$CHROME"; fi
+          echo "Navegador: ${CHROMIUM_EXECUTABLE_PATH:-chromium de Playwright}"
+          cd "$GITHUB_WORKSPACE"
+          export PLAYWRIGHT_MODULE="$RUNNER_TEMP/pw/node_modules/playwright"
+          node firmware/tests/web-ui-test.cjs
+          node firmware/tests/server-sim.cjs
 
       - name: Instalar arduino-cli, core ESP32 3.3.4 y bibliotecas
         run: |
