@@ -36,6 +36,10 @@ Se entrega tambien **GolfDashboardWiFi.ino**, un archivo unico que contiene los 
 - Si el iPhone tenia guardada la red con otra clave: Ajustes > Wi-Fi > (i) > Omitir esta red, y volver a unirse.
 - La red acepta hasta 4 equipos a la vez.
 
+### Editar el panel web
+
+El panel esta en `web/panel.html`. Despues de editarlo, correr `python3 -I tools/generar-panel.py`: lo comprime (gzip) y lo incrusta en `GolfDashboard/WebUi.h` y en `GolfDashboardWiFi.ino`. Se sirve comprimido directo desde la flash (unos 3 KB en vez de 6,7 KB, sin copiarlo a la RAM). El workflow comprueba que lo incrustado coincida con `panel.html`. Abrir el panel corta una busqueda Bluetooth en curso si el ELM no esta conectado, para que la pagina llegue completa.
+
 ### Otros vehiculos (no solo VAG)
 
 El firmware no depende de la marca: usa deteccion automatica de protocolo (`ATSP0`: CAN 11/29 bit, ISO 9141, KWP2000 y J1850) y solo datos OBD-II estandar (modo 01).

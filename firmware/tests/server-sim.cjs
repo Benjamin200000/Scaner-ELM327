@@ -12,8 +12,9 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const { chromium, devices } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
-const source = fs.readFileSync(path.join(__dirname, '../GolfDashboard/WebUi.h'), 'utf8');
-const html = source.split('R"GOLFHTML(')[1].split(')GOLFHTML"')[0].replace('%TOKEN%', 'sim');
+const zlib = require('node:zlib');
+// Igual que el firmware: la pagina va comprimida con gzip.
+const html = zlib.gzipSync(fs.readFileSync(path.join(__dirname, '../web/panel.html')));
 const live = JSON.stringify({
   state: 'OBD conectado', page: 0, mask: 0, rpmHz: 5, speedHz: 5, reference: 14.7, afr: null,
   fields: Array.from({ length: 11 }, () => ({ support: 1, value: 1, age: 100, stale: false, digits: 0 })),
@@ -23,7 +24,8 @@ function responder(pedido) {
   const ruta = pedido.split(' ')[1] || '/';
   if (ruta.startsWith('/api/live')) return ['200 OK', 'application/json', live];
   if (ruta.startsWith('/api/config')) return ['200 OK', 'application/json', '{"name":"ELM 327","mac":""}'];
-  if (ruta === '/') return ['200 OK', 'text/html; charset=utf-8', html];
+  if (ruta.startsWith('/api/token')) return ['200 OK', 'text/plain', 'sim'];
+  if (ruta === '/') return ['200 OK', 'text/html; charset=utf-8', html, 'Content-Encoding: gzip\r\n'];
   return ['404 Not Found', 'text/plain', 'no'];
 }
 function leerPedido(sock, esperaMs) {
@@ -43,9 +45,9 @@ function leerPedido(sock, esperaMs) {
   });
 }
 function enviar(sock, pedido) {
-  const [estado, tipo, cuerpo] = responder(pedido);
-  const b = Buffer.from(cuerpo, 'utf8');
-  sock.write(`HTTP/1.1 ${estado}\r\nContent-Type: ${tipo}\r\nContent-Length: ${b.length}\r\nConnection: close\r\n\r\n`);
+  const [estado, tipo, cuerpo, extra = ''] = responder(pedido);
+  const b = Buffer.isBuffer(cuerpo) ? cuerpo : Buffer.from(cuerpo, 'utf8');
+  sock.write(`HTTP/1.1 ${estado}\r\nContent-Type: ${tipo}\r\n${extra}Content-Length: ${b.length}\r\nConnection: close\r\n\r\n`);
   sock.end(b);
 }
 function servidor(modo) {

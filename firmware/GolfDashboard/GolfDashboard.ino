@@ -144,6 +144,13 @@ bool allowWebWrite(AsyncWebServerRequest* request) {
   request->send(403,"text/plain; charset=utf-8","Recarga la página para obtener una sesión válida.");
   return false;
 }
+// Si el ELM aun no esta conectado, corta la busqueda Bluetooth en curso y la
+// pausa hasta 2 min (o hasta guardar ajustes): comparte radio con el Wi-Fi.
+void freeRadioForWeb() {
+  if (snapshot().link != Link::Connecting) return;
+  searchHoldUntil.store(millis() + 120000);
+  esp_bt_gap_cancel_discovery();
+}
 String postArg(AsyncWebServerRequest* request, const char* name) {
   const AsyncWebParameter* p = request->getParam(name, true);
   return p ? p->value() : String();
@@ -169,8 +176,18 @@ void configureNetwork() {
   char token[17]; snprintf(token,sizeof(token),"%08lx%08lx",(unsigned long)esp_random(),(unsigned long)esp_random());
   webToken = token;
   web.on("/",HTTP_GET,[](AsyncWebServerRequest* request) {
-    String page = FPSTR(WEB_UI); page.replace("%TOKEN%",webToken);
-    AsyncWebServerResponse* response = request->beginResponse(200,"text/html; charset=utf-8",page);
+    // Abrir el panel libera la radio: si se esta buscando el ELM, la busqueda
+    // Bluetooth (hasta 32 s) dejaba la pagina a medio llegar, en negro.
+    freeRadioForWeb();
+    // Comprimido y directo desde la flash: ~3 KB, sin copiarlo a la RAM.
+    AsyncWebServerResponse* response = request->beginResponse(200,"text/html; charset=utf-8",WEB_UI_GZ,WEB_UI_GZ_LEN);
+    response->addHeader("Content-Encoding","gzip");
+    response->addHeader("Cache-Control","no-store"); request->send(response);
+  });
+  // Clave de sesion para las escrituras (la pagina la pide aparte). Un sitio
+  // ajeno no puede leerla: el navegador bloquea leer respuestas de otro origen.
+  web.on("/api/token",HTTP_GET,[](AsyncWebServerRequest* request) {
+    AsyncWebServerResponse* response = request->beginResponse(200,"text/plain",webToken);
     response->addHeader("Cache-Control","no-store"); request->send(response);
   });
   web.on("/api/live",HTTP_GET,[](AsyncWebServerRequest* request) {sendLive(request);});
@@ -222,11 +239,8 @@ void configureNetwork() {
   else Serial.println("mDNS no disponible; usar http://192.168.4.1/");
   // Al unirse un telefono, si el ELM no esta conectado se corta la busqueda
   // Bluetooth en curso: comparte radio con el Wi-Fi y no deja cargar el panel.
-  WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t) {
-    if (snapshot().link != Link::Connecting) return;
-    searchHoldUntil.store(millis() + 120000);
-    esp_bt_gap_cancel_discovery();
-  }, ARDUINO_EVENT_WIFI_AP_STACONNECTED);
+  WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t) { freeRadioForWeb(); },
+               ARDUINO_EVENT_WIFI_AP_STACONNECTED);
   Serial.printf("Wi-Fi %s, abrir http://192.168.4.1/\n",WIFI_AP_NAME);
 }
 

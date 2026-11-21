@@ -4,8 +4,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 (async () => {
-  const source = fs.readFileSync(path.join(__dirname, '../GolfDashboard/WebUi.h'), 'utf8');
-  const html = source.split('R"GOLFHTML(')[1].split(')GOLFHTML"')[0].replace('%TOKEN%', 'test-token');
+  const html = fs.readFileSync(path.join(__dirname, '../web/panel.html'), 'utf8');
   const values = [900, 0, 92, null, 12.34, null, 28, 0.35, 25, 3, 14.1];
   const data = {
     state: 'OBD conectado', page: 0, mask: 0, rpmHz: 5.5, speedHz: 5,
@@ -35,6 +34,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
         if (failLive) return route.abort();
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) });
       }
+      if (url.pathname === '/api/token') return route.fulfill({ status: 200, contentType: 'text/plain', body: 'test-token' });
       if (url.pathname === '/api/config') return route.fulfill({
         status: 200, contentType: 'application/json', body: JSON.stringify({ name: 'ELM 327', mac: '' })
       });
