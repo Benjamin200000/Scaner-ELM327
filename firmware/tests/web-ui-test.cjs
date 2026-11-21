@@ -72,9 +72,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await page.waitForFunction(() => document.querySelectorAll('#cards .value')[11].textContent === '14.70');
     if (process.env.GOLF_SCREENSHOT) await page.screenshot({ path: process.env.GOLF_SCREENSHOT, fullPage: true });
     failLive = true;
-    await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Sin conexión'));
+    await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Sin respuesta del ESP32'));
     assert((await page.locator('#cards .value').allTextContents()).every(x => x === '—'));
+    // Tras un corte espera 2 s antes de reintentar (no amontona pedidos) y se recupera sola.
+    failLive = false;
+    const t0 = Date.now();
+    await page.waitForFunction(() => document.querySelector('#status').textContent.startsWith('OBD conectado'), null, { timeout: 6000 });
+    assert(Date.now() - t0 < 5000, 'la pagina tardo demasiado en recuperarse');
+    // Mientras busca el ELM indica como corregir el nombre.
+    data.state = 'Conectando Bluetooth';
+    await page.waitForFunction(() => document.querySelector('#status').textContent.includes('nombre Bluetooth exacto'));
     assert.deepEqual(errors, []);
-    console.log('Interfaz movil correcta: datos, N/D, extras, configuracion, AFR y desconexion. API simulada.');
+    console.log('Interfaz movil correcta: datos, N/D, extras, configuracion, AFR, desconexion, recuperacion y aviso de busqueda. API simulada.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

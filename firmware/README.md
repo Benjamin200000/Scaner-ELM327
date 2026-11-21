@@ -10,7 +10,7 @@ El ESP32 usa Bluetooth clasico para el ELM y Wi-Fi en modo punto de acceso para 
 
 - Red: **GolfDashboard**.
 - Clave inicial: **GolfOBD2026**. Se puede cambiar en Config.h antes de subir el programa.
-- Direccion: **http://192.168.4.1/** (HTTP, no HTTPS).
+- Direccion: **http://192.168.4.1/** (HTTP, no HTTPS). En iPhone, Mac y la mayoria de los equipos tambien funciona **http://golfdash.local/**.
 - En Android/iPhone, mantener la conexion aunque aparezca el aviso de red sin internet. Si el navegador no abre, verificar que no haya cambiado a otra red o que una VPN impida acceder a la IP local.
 - El panel se actualiza aproximadamente cada 500 ms; esa frecuencia no equivale a la frecuencia de las respuestas OBD.
 - Permite elegir la pagina OLED y cambiar nombre Bluetooth, PIN o MAC del adaptador. La MAC opcional tiene prioridad sobre el nombre. Se requiere un ELM Bluetooth clasico SPP. Si el PIN se deja vacio, se conserva el actual.
@@ -27,6 +27,14 @@ El Wi-Fi y Bluetooth del ESP32 comparten radio de 2,4 GHz. La implementacion sep
 ### Si ChatGPT no descarga el ZIP
 
 Se entrega tambien **GolfDashboardWiFi.ino**, un archivo unico que contiene los mismos componentes y la pagina web. Abrirlo como texto y copiar TODO en un sketch nuevo de Arduino IDE, guardar con nombre GolfDashboardWiFi y compilar con los mismos ajustes. No necesita las cabeceras separadas del paquete. La version `.txt` contiene exactamente el mismo codigo para copiarlo desde el visor del chat.
+
+### iPhone y navegadores
+
+- El panel usa un servidor web asincrono (ESPAsyncWebServer). El WebServer del core atendia una conexion a la vez y esperaba hasta 5 s a una conexion abierta sin pedido; Safari y Chrome abren conexiones asi por adelantado y el panel podia no cargar nunca. `tests/server-sim.cjs` reproduce ese caso.
+- En el iPhone: Ajustes > Wi-Fi > GolfDashboard, clave GolfOBD2026. Aparece "Sin conexion a Internet": es normal, mantenerse conectado. Abrir Safari y escribir la direccion completa con `http://`.
+- Si el telefono no logra unirse: esperar un minuto tras encender el ESP32 y reintentar. Al unirse un telefono, si el ELM aun no esta conectado, el ESP32 corta la busqueda Bluetooth en curso y la pausa hasta 2 minutos (o hasta guardar ajustes), porque comparte radio con el Wi-Fi.
+- Si el iPhone tenia guardada la red con otra clave: Ajustes > Wi-Fi > (i) > Omitir esta red, y volver a unirse.
+- La red acepta hasta 4 equipos a la vez.
 
 ## Dos paginas: un solo programa
 
@@ -62,7 +70,7 @@ Alimentar el ESP32 por USB desde el PC o desde un cargador USB de automovil regu
 2. En Archivo > Preferencias > Gestor de URLs adicionales de tarjetas, agregar:
    `https://espressif.github.io/arduino-esp32/package_esp32_index.json`
 3. En Gestor de placas, instalar **esp32 by Espressif Systems, version 3.3.4**. El codigo usa la API `BluetoothSerial.setPin(pin, longitud)` de esa version; no se ha comprobado con el core 2.x.
-4. En el Gestor de bibliotecas, instalar **Adafruit SSD1306 2.5.15**, **Adafruit GFX Library 1.12.4** y su dependencia **Adafruit BusIO 1.17.4**. Aceptar la instalacion de dependencias.
+4. En el Gestor de bibliotecas, instalar **Adafruit SSD1306 2.5.15**, **Adafruit GFX Library 1.12.4** y su dependencia **Adafruit BusIO 1.17.4**, y ademas **ESP Async WebServer 3.12.1** y **Async TCP 3.5.0** (ambas de ESP32Async). Aceptar la instalacion de dependencias.
 5. Descomprimir el paquete y abrir **GolfDashboard/GolfDashboard.ino**. Mantener juntos los archivos `.ino` y `.h` de esa carpeta.
 6. En Herramientas, seleccionar **ESP32 Dev Module**, CPU **240 MHz**, Flash **4 MB**, Partition Scheme **Huge APP (3MB No OTA/1MB SPIFFS)** y Upload Speed **460800**. Seleccionar el puerto COM de la placa.
 7. Conectar un cable USB de datos y pulsar **Verificar** y despues **Subir**. Si queda en `Connecting...`, mantener BOOT pulsado hasta que empiece la escritura y soltarlo. Si falla la carga, bajar Upload Speed a **115200**. La velocidad de carga USB no determina la velocidad OBD.

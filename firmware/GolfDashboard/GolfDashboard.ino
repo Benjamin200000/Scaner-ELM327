@@ -8,7 +8,10 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <WiFi.h>
-#include <WebServer.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <ESPmDNS.h>
+#include <esp_gap_bt_api.h>
 #include <Preferences.h>
 #include <atomic>
 #include "Config.h"
@@ -27,7 +30,12 @@ constexpr uint8_t PIDS[] = {0x0C, 0x0D, 0x05, 0x5C, 0x10, 0x00, 0x0F, 0x0B, 0x04
 Dashboard shared;
 AdapterSettings adapter;
 Preferences preferences;
-WebServer web{80};
+// Servidor asincrono: atiende varias conexiones a la vez. El WebServer sincrono
+// del core atendia una sola y esperaba hasta 5 s a una conexion abierta sin
+// pedido (Safari y Chrome las abren por adelantado), y la pagina no cargaba.
+AsyncWebServer web{80};
+// Hasta cuando no buscar el ELM porque un telefono acaba de unirse al Wi-Fi.
+std::atomic<uint32_t> searchHoldUntil{0};
 String webToken;
 std::atomic<bool> reconnectRequested{false};
 portMUX_TYPE guard = portMUX_INITIALIZER_UNLOCKED;
@@ -88,7 +96,7 @@ String jsonText(const char* text) {
   }
   return out + '"';
 }
-void sendLive() {
+void sendLive(AsyncWebServerRequest* request) {
   Dashboard d = snapshot();
   uint32_t now = millis();
   const char* states[] = {"Conectando Bluetooth", "Detectando ECU", "OBD conectado", "Reconectando OBD"};
@@ -118,13 +126,19 @@ void sendLive() {
     out += ",\"digits\":"+String(id == LAMBDA ? 3 : id == MAF || id == MAP || id == VOLTAGE ? 2 : 0)+"}";
   }
   out += "]}";
-  web.sendHeader("Cache-Control", "no-store");
-  web.send(200, "application/json", out);
+  AsyncWebServerResponse* response = request->beginResponse(200, "application/json", out);
+  response->addHeader("Cache-Control", "no-store");
+  request->send(response);
 }
-bool allowWebWrite() {
-  if (web.header("X-Golf-Token") == webToken) return true;
-  web.send(403,"text/plain; charset=utf-8","Recarga la página para obtener una sesión válida.");
+bool allowWebWrite(AsyncWebServerRequest* request) {
+  const AsyncWebHeader* header = request->getHeader("X-Golf-Token");
+  if (header && header->value() == webToken) return true;
+  request->send(403,"text/plain; charset=utf-8","Recarga la página para obtener una sesión válida.");
   return false;
+}
+String postArg(AsyncWebServerRequest* request, const char* name) {
+  const AsyncWebParameter* p = request->getParam(name, true);
+  return p ? p->value() : String();
 }
 void configureNetwork() {
   strlcpy(adapter.name, preferences.getString("name", ELM_NAME).c_str(), sizeof(adapter.name));
@@ -143,57 +157,68 @@ void configureNetwork() {
   }
   WiFi.mode(WIFI_AP);
   WiFi.setSleep(false);
-  if (!WiFi.softAP(WIFI_AP_NAME,WIFI_AP_PASSWORD,1,false,2)) Serial.println("No se pudo iniciar Wi-Fi AP.");
+  if (!WiFi.softAP(WIFI_AP_NAME,WIFI_AP_PASSWORD,1,false,4)) Serial.println("No se pudo iniciar Wi-Fi AP.");
   char token[17]; snprintf(token,sizeof(token),"%08lx%08lx",(unsigned long)esp_random(),(unsigned long)esp_random());
   webToken = token;
-  const char* headers[] = {"X-Golf-Token"}; web.collectHeaders(headers,1);
-  web.on("/",HTTP_GET,[&]() {
+  web.on("/",HTTP_GET,[](AsyncWebServerRequest* request) {
     String page = FPSTR(WEB_UI); page.replace("%TOKEN%",webToken);
-    web.sendHeader("Cache-Control","no-store"); web.send(200,"text/html; charset=utf-8",page);
+    AsyncWebServerResponse* response = request->beginResponse(200,"text/html; charset=utf-8",page);
+    response->addHeader("Cache-Control","no-store"); request->send(response);
   });
-  web.on("/api/live",HTTP_GET,[&]() {sendLive();});
-  web.on("/api/config",HTTP_GET,[&]() {
+  web.on("/api/live",HTTP_GET,[](AsyncWebServerRequest* request) {sendLive(request);});
+  web.on("/api/config",HTTP_GET,[](AsyncWebServerRequest* request) {
     AdapterSettings a = adapterSnapshot();
-    web.sendHeader("Cache-Control","no-store");
-    web.send(200,"application/json","{\"name\":"+jsonText(a.name)+",\"mac\":"+jsonText(a.mac)+"}");
+    AsyncWebServerResponse* response = request->beginResponse(200,"application/json",
+      "{\"name\":"+jsonText(a.name)+",\"mac\":"+jsonText(a.mac)+"}");
+    response->addHeader("Cache-Control","no-store"); request->send(response);
   });
-  web.on("/api/page",HTTP_POST,[&]() {
-    if (!allowWebWrite()) return;
-    String page = web.arg("page");
-    if (page != "0" && page != "1") {web.send(400,"text/plain","Pagina invalida"); return;}
+  web.on("/api/page",HTTP_POST,[](AsyncWebServerRequest* request) {
+    if (!allowWebWrite(request)) return;
+    String page = postArg(request,"page");
+    if (page != "0" && page != "1") {request->send(400,"text/plain","Pagina invalida"); return;}
     portENTER_CRITICAL(&guard); shared.page = page == "1" ? 1 : 0; ++shared.revision; portEXIT_CRITICAL(&guard);
-    web.send(200,"text/plain","OK");
+    request->send(200,"text/plain","OK");
   });
-  web.on("/api/extras",HTTP_POST,[&]() {
-    if (!allowWebWrite()) return;
-    String mask = web.arg("mask"); bool valid = mask.length() > 0 && mask.length() <= 4;
+  web.on("/api/extras",HTTP_POST,[](AsyncWebServerRequest* request) {
+    if (!allowWebWrite(request)) return;
+    String mask = postArg(request,"mask"); bool valid = mask.length() > 0 && mask.length() <= 4;
     for (unsigned i=0; i<mask.length(); ++i) if (mask[i]<'0'||mask[i]>'9') valid=false;
     uint32_t number = mask.toInt();
-    if (!valid || number >= (uint32_t(1)<<FIELD_COUNT)) {web.send(400,"text/plain","Seleccion invalida");return;}
+    if (!valid || number >= (uint32_t(1)<<FIELD_COUNT)) {request->send(400,"text/plain","Seleccion invalida");return;}
     portENTER_CRITICAL(&guard); shared.extraMask=number; ++shared.revision; portEXIT_CRITICAL(&guard);
-    web.send(200,"text/plain","OK");
+    request->send(200,"text/plain","OK");
   });
-  web.on("/api/config",HTTP_POST,[&]() {
-    if (!allowWebWrite()) return;
+  web.on("/api/config",HTTP_POST,[](AsyncWebServerRequest* request) {
+    if (!allowWebWrite(request)) return;
     AdapterSettings next = adapterSnapshot();
-    String name=web.arg("name"), pin=web.arg("pin"), mac=web.arg("mac"); name.trim(); mac.trim();
+    String name=postArg(request,"name"), pin=postArg(request,"pin"), mac=postArg(request,"mac"); name.trim(); mac.trim();
     bool valid=name.length()>0 && name.length()<sizeof(next.name) && pin.length()<sizeof(next.pin);
     for (unsigned i=0; i<name.length(); ++i) if (name[i]<32 || uint8_t(name[i])>126) valid=false;
     for (unsigned i=0; i<pin.length(); ++i) if (pin[i]<32 || uint8_t(pin[i])>126) valid=false;
     uint8_t parsed[6];
     if (mac.length() && !parseMac(mac.c_str(),parsed)) valid=false;
-    if (!valid) {web.send(400,"text/plain; charset=utf-8","Revisa nombre, PIN (máximo 16 caracteres) y MAC.");return;}
+    if (!valid) {request->send(400,"text/plain; charset=utf-8","Revisa nombre, PIN (máximo 16 caracteres) y MAC.");return;}
     strlcpy(next.name,name.c_str(),sizeof(next.name)); strlcpy(next.mac,mac.c_str(),sizeof(next.mac));
     if (pin.length()) strlcpy(next.pin,pin.c_str(),sizeof(next.pin));
     if (preferences.putBytes("adapter",&next,sizeof(next)) != sizeof(next)) {
-      web.send(500,"text/plain","No se pudo guardar en memoria. Revisa por USB."); return;
+      request->send(500,"text/plain","No se pudo guardar en memoria. Revisa por USB."); return;
     }
     portENTER_CRITICAL(&guard); adapter=next; portEXIT_CRITICAL(&guard);
     reconnectRequested.store(true);
-    web.send(200,"text/plain; charset=utf-8","Guardado. Reconectando Bluetooth; puede tardar varias decenas de segundos.");
+    request->send(200,"text/plain; charset=utf-8","Guardado. Reconectando Bluetooth; puede tardar varias decenas de segundos.");
   });
-  web.onNotFound([&]() {web.send(404,"text/plain","Abre http://192.168.4.1/");});
+  web.onNotFound([](AsyncWebServerRequest* request) {request->send(404,"text/plain","Abre http://192.168.4.1/");});
   web.begin();
+  // Nombre facil para el telefono: http://golfdash.local/ (la IP sigue valiendo).
+  if (MDNS.begin("golfdash")) MDNS.addService("http", "tcp", 80);
+  else Serial.println("mDNS no disponible; usar http://192.168.4.1/");
+  // Al unirse un telefono, si el ELM no esta conectado se corta la busqueda
+  // Bluetooth en curso: comparte radio con el Wi-Fi y no deja cargar el panel.
+  WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t) {
+    if (snapshot().link != Link::Connecting) return;
+    searchHoldUntil.store(millis() + 120000);
+    esp_bt_gap_cancel_discovery();
+  }, ARDUINO_EVENT_WIFI_AP_STACONNECTED);
   Serial.printf("Wi-Fi %s, abrir http://192.168.4.1/\n",WIFI_AP_NAME);
 }
 
@@ -319,6 +344,12 @@ void obdTask(void*) {
   for (;;) {
     reconnectRequested.exchange(false);
     linkState(Link::Connecting, true);
+    const uint32_t hold = searchHoldUntil.exchange(0);
+    if (hold && int32_t(hold - millis()) > 0 && WiFi.softAPgetStationNum() > 0) {
+      Serial.println("Telefono conectado: busqueda del ELM en pausa hasta 2 min; guardar ajustes la reanuda.");
+      waitOrReconfigure(hold - millis());
+      reconnectRequested.store(false);
+    }
     AdapterSettings wanted = adapterSnapshot();
     elm.setPin(wanted.pin, strlen(wanted.pin));
     Serial.printf("Conectando a %s; contacto del Golf encendido.\n", wanted.name);
@@ -479,7 +510,6 @@ void loop() {
   static TickType_t lastWake = xTaskGetTickCount();
   static bool lastRaw = HIGH, stable = HIGH;
   static uint32_t buttonChangedAt = 0;
-  web.handleClient();
   uint32_t now = millis();
   bool raw = digitalRead(PAGE_BUTTON_PIN);
   if (raw != lastRaw) { lastRaw = raw; buttonChangedAt = now; }

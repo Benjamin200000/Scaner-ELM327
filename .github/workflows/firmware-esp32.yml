@@ -35,6 +35,17 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined firmware/tests/obd_codec_test.cpp -o obd-test
           ./obd-test
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Pruebas de la página del panel (iPhone simulado, sin ESP32)
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@1.56.1
+          npx playwright install --with-deps chromium
+          PLAYWRIGHT_MODULE="$PWD/node_modules/playwright" node firmware/tests/web-ui-test.cjs
+          PLAYWRIGHT_MODULE="$PWD/node_modules/playwright" node firmware/tests/server-sim.cjs
+
       - name: Instalar arduino-cli, core ESP32 3.3.4 y bibliotecas
         run: |
           mkdir -p "$HOME/bin"
@@ -43,7 +54,9 @@ jobs:
           export PATH="$HOME/bin:$PATH"
           arduino-cli core update-index --additional-urls "$ESP32_INDEX"
           arduino-cli core install esp32:esp32@3.3.4 --additional-urls "$ESP32_INDEX"
-          arduino-cli lib install "Adafruit SSD1306@2.5.15" "Adafruit GFX Library@1.12.4" "Adafruit BusIO@1.17.4"
+          arduino-cli lib install "Adafruit SSD1306@2.5.15" "Adafruit GFX Library@1.12.4" "Adafruit BusIO@1.17.4" \
+            "ESP Async WebServer@3.12.1" "Async TCP@3.5.0"
+          arduino-cli lib list
 
       - name: Compilar la versión de varios archivos (solo comprobación)
         run: arduino-cli compile --fqbn "$FQBN" firmware/GolfDashboard
@@ -68,16 +81,12 @@ jobs:
             "source_sha256": "$(sha256sum firmware/GolfDashboardWiFi/GolfDashboardWiFi.ino | cut -d' ' -f1)",
             "merged_sha256": "$(cut -d' ' -f1 $D/GolfDashboard-ESP32-WROOM32-SHA256.txt)",
             "core": "esp32:esp32@3.3.4",
-            "libraries": ["Adafruit SSD1306 2.5.15", "Adafruit GFX Library 1.12.4", "Adafruit BusIO 1.17.4"],
+            "libraries": ["Adafruit SSD1306 2.5.15", "Adafruit GFX Library 1.12.4", "Adafruit BusIO 1.17.4", "ESP Async WebServer 3.12.1", "Async TCP 3.5.0"],
             "commit": "$GITHUB_SHA",
             "hardware_tested": false
           }
           JSON
           cat $D/GolfDashboard-ESP32-WROOM32-SHA256.txt
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
 
       - name: Armar el cargador web
         working-directory: firmware-cargador
