@@ -27,6 +27,9 @@ function emulador(op) {
       switch (o) {
         case 0x08: for (let i = 0; i < 8; i++) responder(8, 0x20120707); return;
         case 0x0a: {
+          if (op.corromperTrasCambio && stub && baud > 115200 && !fallado) {
+            fallado = true; enviarCrudo([0x78, 0x00, 0x00, 0x00]); return; // "Invalid head of packet (0x78)"
+          }
           const a = u32(d, 0);
           const v = a === 0x40001000 ? 0x00f01d83 : a === 0x3ff42080 ? 0x001640ef : 0;
           return responder(0x0a, v);
@@ -102,8 +105,9 @@ function emulador(op) {
   };
   const a = await caso('Escritura normal a 460800', {});
   const c = await caso('Error 201 a alta velocidad → reintento a 115200', { fallarSiBaudMayorA: 115200 });
+  const e = await caso('Corrupción tras subir la velocidad (como el usuario) → reintento a 115200', { corromperTrasCambio: true });
   await b.close();
-  const ok = a.estado.startsWith('Listo') && c.estado.startsWith('Listo') && /status 201,0/.test(c.log) && /Reintentando la escritura completa a 115200/.test(c.log);
-  console.log(ok ? '\nCorrecto: escribe y verifica, y ante el error 201 repite todo a 115200 y termina bien.' : '\nFALLÓ');
+  const ok = e.estado.startsWith('Listo') && /Unable to verify flash chip connection/.test(e.log) && /Reintentando todo a 115200/.test(e.log) && a.estado.startsWith('Listo') && c.estado.startsWith('Listo') && /status 201,0/.test(c.log) && /Reintentando todo a 115200/.test(c.log);
+  console.log(ok ? '\nCorrecto: escribe y verifica; ante el error 201 o datos corruptos tras subir la velocidad repite todo a 115200 y termina bien.' : '\nFALLÓ');
   process.exit(ok ? 0 : 1);
 })().catch((e) => { console.error(e); process.exit(1); });

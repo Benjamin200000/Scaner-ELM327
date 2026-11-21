@@ -58,7 +58,7 @@ async function verificarImagen(): Promise<boolean> {
 }
 
 /** Conecta, comprueba la placa y, si se pide, borra y escribe. Lanza error si algo falla. */
-async function intento(transport: Transport, baudios: number, borrar: boolean, marcar: (f: 'escribiendo') => void) {
+async function intento(transport: Transport, baudios: number, borrar: boolean, marcar: (f: 'conectado') => void) {
   const loader = new ESPLoader({
     transport,
     baudrate: baudios,
@@ -79,7 +79,13 @@ async function intento(transport: Transport, baudios: number, borrar: boolean, m
   aviso('info', manual.checked
     ? 'Mantené BOOT apretado. Si sigue en "Connecting...", sin soltar BOOT tocá EN una vez.'
     : 'Conectando con el ESP32… (la placa se reinicia sola en modo carga)');
+  // Desde que se sube la velocidad, un error de transmision se arregla
+  // repitiendo a 115200: puede saltar en el primer pedido a la nueva velocidad
+  // (dentro de main, al verificar la flash), al borrar o al escribir.
+  const cambiarVelocidad = loader.changeBaud.bind(loader);
+  loader.changeBaud = async () => { marcar('conectado'); return cambiarVelocidad(); };
   const chip = await loader.main('default_reset');
+  marcar('conectado');
   if (manual.checked) aviso('info', 'Conectado: ya podés soltar BOOT.');
   linea(`\n> Chip detectado: ${chip} · velocidad ${baudios}`);
   if (loader.chip.CHIP_NAME !== 'ESP32') {
@@ -92,7 +98,6 @@ async function intento(transport: Transport, baudios: number, borrar: boolean, m
     throw new Error(`La placa tiene ${flash} de flash y esta imagen necesita 4MB. No se escribió nada.`);
   }
 
-  marcar('escribiendo');
   if (borrar) {
     aviso('info', 'Borrando toda la memoria (puede tardar hasta un minuto). No desconectes la placa.');
     await loader.eraseFlash();
@@ -138,7 +143,7 @@ async function cargar() {
     const velocidades = elegida > 115200 ? [elegida, 115200] : [elegida];
     for (let i = 0; i < velocidades.length; i++) {
       const baudios = velocidades[i]!;
-      const estado: { fase: 'conectando' | 'escribiendo' } = { fase: 'conectando' };
+      const estado: { fase: 'conectando' | 'conectado' } = { fase: 'conectando' };
       transport = new Transport(port, false);
       try {
         // El borrado completo solo en el primer intento: después ya está borrada.
@@ -146,10 +151,10 @@ async function cargar() {
         break;
       } catch (err) {
         const ultimo = i === velocidades.length - 1;
-        if (estado.fase !== 'escribiendo' || ultimo) throw err;
+        if (estado.fase !== 'conectado' || ultimo) throw err;
         const msg = err instanceof Error ? err.message : String(err);
-        linea(`\n> Falló la escritura a ${baudios}: ${msg}`);
-        linea('> Reintentando la escritura completa a 115200, más lenta pero más segura…\n');
+        linea(`\n> Falló a ${baudios} baudios: ${msg}`);
+        linea('> Reintentando todo a 115200, más lento pero más seguro…\n');
         aviso('info', 'Hubo un error de transmisión. Reintentando solo a velocidad segura (115200)…');
         await transport.disconnect().catch(() => {});
         transport = null;
@@ -178,7 +183,7 @@ async function cargar() {
       }
     } else if (/Failed to open|already open|in use/i.test(msg)) {
       aviso('error', 'El puerto está ocupado. Cerrá Arduino IDE, monitores serie u otras pestañas que lo usen.');
-    } else if (/status|Timeout|seq|checksum|MD5/i.test(msg)) {
+    } else if (/status|Timeout|seq|checksum|MD5|head of packet|noise|corrupt|verify flash/i.test(msg)) {
       aviso('error', 'La escritura falló incluso a velocidad segura: es un problema de la conexión USB. Probá otro cable (corto y de datos), otro puerto del computador sin hub, y volvé a pulsar Cargar.');
     } else {
       aviso('error', `Falló: ${msg}`);
