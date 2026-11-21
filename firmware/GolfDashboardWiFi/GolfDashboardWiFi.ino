@@ -367,26 +367,26 @@ void configureNetwork() {
   if (!WiFi.softAP(WIFI_AP_NAME,WIFI_AP_PASSWORD,1,false,4)) Serial.println("No se pudo iniciar Wi-Fi AP.");
   char token[17]; snprintf(token,sizeof(token),"%08lx%08lx",(unsigned long)esp_random(),(unsigned long)esp_random());
   webToken = token;
-  web.on("/",HTTP_GET,[](AsyncWebServerRequest* request) {
+  web.on("/",HTTP_GET,[this](AsyncWebServerRequest* request) {
     String page = FPSTR(WEB_UI); page.replace("%TOKEN%",webToken);
     AsyncWebServerResponse* response = request->beginResponse(200,"text/html; charset=utf-8",page);
     response->addHeader("Cache-Control","no-store"); request->send(response);
   });
-  web.on("/api/live",HTTP_GET,[](AsyncWebServerRequest* request) {sendLive(request);});
-  web.on("/api/config",HTTP_GET,[](AsyncWebServerRequest* request) {
+  web.on("/api/live",HTTP_GET,[this](AsyncWebServerRequest* request) {sendLive(request);});
+  web.on("/api/config",HTTP_GET,[this](AsyncWebServerRequest* request) {
     AdapterSettings a = adapterSnapshot();
     AsyncWebServerResponse* response = request->beginResponse(200,"application/json",
       "{\"name\":"+jsonText(a.name)+",\"mac\":"+jsonText(a.mac)+"}");
     response->addHeader("Cache-Control","no-store"); request->send(response);
   });
-  web.on("/api/page",HTTP_POST,[](AsyncWebServerRequest* request) {
+  web.on("/api/page",HTTP_POST,[this](AsyncWebServerRequest* request) {
     if (!allowWebWrite(request)) return;
     String page = postArg(request,"page");
     if (page != "0" && page != "1") {request->send(400,"text/plain","Pagina invalida"); return;}
     portENTER_CRITICAL(&guard); shared.page = page == "1" ? 1 : 0; ++shared.revision; portEXIT_CRITICAL(&guard);
     request->send(200,"text/plain","OK");
   });
-  web.on("/api/extras",HTTP_POST,[](AsyncWebServerRequest* request) {
+  web.on("/api/extras",HTTP_POST,[this](AsyncWebServerRequest* request) {
     if (!allowWebWrite(request)) return;
     String mask = postArg(request,"mask"); bool valid = mask.length() > 0 && mask.length() <= 4;
     for (unsigned i=0; i<mask.length(); ++i) if (mask[i]<'0'||mask[i]>'9') valid=false;
@@ -395,7 +395,7 @@ void configureNetwork() {
     portENTER_CRITICAL(&guard); shared.extraMask=number; ++shared.revision; portEXIT_CRITICAL(&guard);
     request->send(200,"text/plain","OK");
   });
-  web.on("/api/config",HTTP_POST,[](AsyncWebServerRequest* request) {
+  web.on("/api/config",HTTP_POST,[this](AsyncWebServerRequest* request) {
     if (!allowWebWrite(request)) return;
     AdapterSettings next = adapterSnapshot();
     String name=postArg(request,"name"), pin=postArg(request,"pin"), mac=postArg(request,"mac"); name.trim(); mac.trim();
@@ -414,14 +414,14 @@ void configureNetwork() {
     reconnectRequested.store(true);
     request->send(200,"text/plain; charset=utf-8","Guardado. Reconectando Bluetooth; puede tardar varias decenas de segundos.");
   });
-  web.onNotFound([](AsyncWebServerRequest* request) {request->send(404,"text/plain","Abre http://192.168.4.1/");});
+  web.onNotFound([this](AsyncWebServerRequest* request) {request->send(404,"text/plain","Abre http://192.168.4.1/");});
   web.begin();
   // Nombre facil para el telefono: http://golfdash.local/ (la IP sigue valiendo).
   if (MDNS.begin("golfdash")) MDNS.addService("http", "tcp", 80);
   else Serial.println("mDNS no disponible; usar http://192.168.4.1/");
   // Al unirse un telefono, si el ELM no esta conectado se corta la busqueda
   // Bluetooth en curso: comparte radio con el Wi-Fi y no deja cargar el panel.
-  WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t) {
+  WiFi.onEvent([this](arduino_event_id_t, arduino_event_info_t) {
     if (snapshot().link != Link::Connecting) return;
     searchHoldUntil.store(millis() + 120000);
     esp_bt_gap_cancel_discovery();
