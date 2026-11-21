@@ -299,11 +299,13 @@ bool initializeElm() {
 
 // La busqueda Bluetooth clasica ocupa la misma radio que el Wi-Fi. Repetida
 // sin pausa, el telefono no logra unirse a GolfDashboard y no se puede corregir
-// el nombre o PIN del ELM desde el panel. Tras dos intentos fallidos se espacia:
-// 15 s sin telefonos conectados, 30 s con alguno conectado al punto de acceso.
+// el nombre o PIN del ELM desde el panel. Cada busqueda por nombre dura hasta
+// 32 s en este core. Tras dos intentos fallidos se espacia: 15 s sin
+// telefonos conectados y 2 min con alguno conectado, para que el panel cargue
+// y se pueda corregir el nombre. Guardar ajustes corta la espera.
 uint32_t bluetoothRetryDelay(unsigned failures) {
   if (failures < 2) return 3000;
-  return WiFi.softAPgetStationNum() > 0 ? 30000 : 15000;
+  return WiFi.softAPgetStationNum() > 0 ? 120000 : 15000;
 }
 
 // Espera, pero corta en cuanto se guarda una configuracion nueva desde el panel.
