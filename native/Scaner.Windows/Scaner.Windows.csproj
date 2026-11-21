@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms><EnableWindowsTargeting>true</EnableWindowsTargeting><ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode><AssemblyName>ScanerELM327</AssemblyName><Version>0.2.0</Version><Description>Diagnóstico automotriz nativo</Description></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../Scaner.Core/Scaner.Core.csproj"/><PackageReference Include="System.IO.Ports" Version="10.0.0"/></ItemGroup>
+</Project>
