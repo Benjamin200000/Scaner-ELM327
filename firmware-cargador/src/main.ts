@@ -57,6 +57,64 @@ async function verificarImagen(): Promise<boolean> {
   return hex === FIRMWARE_SHA256;
 }
 
+/** Conecta, comprueba la placa y, si se pide, borra y escribe. Lanza error si algo falla. */
+async function intento(transport: Transport, baudios: number, borrar: boolean, marcar: (f: 'escribiendo') => void) {
+  const loader = new ESPLoader({
+    transport,
+    baudrate: baudios,
+    // No se borra el registro al reconectar: si hay un segundo intento, el primero queda a la vista.
+    terminal: { clean: () => {}, writeLine: linea, write: escribir },
+  });
+  // Un bloque comprimido que se reenvía después de que la placa ya lo recibió
+  // le deja datos de más y corta con estado 201 (0xC9, demasiados datos). Mejor
+  // no reenviar bloques sueltos y, si algo falla, repetir la escritura completa.
+  loader.WRITE_BLOCK_ATTEMPTS = 1;
+
+  // En Windows, abrir el puerto ya reinicia la placa: por eso el modo manual
+  // no evita el reinicio, sino que da tiempo (unos 30 s) a tener BOOT apretado
+  // mientras ocurre. Con BOOT abajo, cualquier reinicio entra en modo carga.
+  const intentos = manual.checked ? 30 : 12;
+  const conectar = loader.connect.bind(loader);
+  loader.connect = (modo = 'default_reset', _a = 7, detectar = true) => conectar(modo, intentos, detectar);
+  aviso('info', manual.checked
+    ? 'Mantené BOOT apretado. Si sigue en "Connecting...", sin soltar BOOT tocá EN una vez.'
+    : 'Conectando con el ESP32… (la placa se reinicia sola en modo carga)');
+  const chip = await loader.main('default_reset');
+  if (manual.checked) aviso('info', 'Conectado: ya podés soltar BOOT.');
+  linea(`\n> Chip detectado: ${chip} · velocidad ${baudios}`);
+  if (loader.chip.CHIP_NAME !== 'ESP32') {
+    throw new Error(`Esta imagen es para ESP32 original y la placa es ${loader.chip.CHIP_NAME}. No se escribió nada.`);
+  }
+  const flash = await loader.detectFlashSize();
+  linea(`> Memoria flash: ${flash}`);
+  const mb = /^(\d+)MB$/.exec(flash);
+  if (mb && Number(mb[1]) < 4) {
+    throw new Error(`La placa tiene ${flash} de flash y esta imagen necesita 4MB. No se escribió nada.`);
+  }
+
+  marcar('escribiendo');
+  if (borrar) {
+    aviso('info', 'Borrando toda la memoria (puede tardar hasta un minuto). No desconectes la placa.');
+    await loader.eraseFlash();
+    linea('> Memoria borrada por completo.');
+  }
+  aviso('info', 'Escribiendo el firmware. No desconectes la placa.');
+  progreso(0);
+  await loader.writeFlash({
+    fileArray: [{ data: imagen, address: 0x0 }],
+    flashMode: 'keep',
+    flashFreq: 'keep',
+    flashSize: 'keep',
+    eraseAll: false,
+    compress: true,
+    reportProgress: (_i, escrito, total) => progreso((escrito / total) * 100),
+    calculateMD5Hash: md5Hex,
+  });
+  progreso(100);
+  linea('> Escritura verificada por el ESP32 (MD5).');
+  await loader.after('hard_reset');
+}
+
 async function cargar() {
   boton.disabled = true;
   botonConsola.disabled = true;
@@ -75,54 +133,29 @@ async function cargar() {
       throw new Error('PUERTO_BLUETOOTH');
     }
     linea(`> Puerto USB: ${PUERTOS_NOMBRE(info.usbVendorId)} (VID 0x${info.usbVendorId.toString(16).padStart(4, '0')})`);
-    transport = new Transport(port, false);
-    const loader = new ESPLoader({
-      transport,
-      baudrate: Number(velocidad.value),
-      terminal: { clean: () => { log.textContent = ''; }, writeLine: linea, write: escribir },
-    });
 
-    // En Windows, abrir el puerto ya reinicia la placa: por eso el modo manual
-    // no evita el reinicio, sino que da tiempo (unos 30 s) a tener BOOT apretado
-    // mientras ocurre. Con BOOT abajo, cualquier reinicio entra en modo carga.
-    const intentos = manual.checked ? 30 : 12;
-    const conectar = loader.connect.bind(loader);
-    loader.connect = (modo = 'default_reset', _a = 7, detectar = true) => conectar(modo, intentos, detectar);
-    aviso('info', manual.checked
-      ? 'Mantené BOOT apretado. Si sigue en "Connecting...", sin soltar BOOT tocá EN una vez.'
-      : 'Conectando con el ESP32… (la placa se reinicia sola en modo carga)');
-    const chip = await loader.main('default_reset');
-    if (manual.checked) aviso('info', 'Conectado: ya podés soltar BOOT.');
-    linea(`\n> Chip detectado: ${chip}`);
-    if (loader.chip.CHIP_NAME !== 'ESP32') {
-      throw new Error(`Esta imagen es para ESP32 original y la placa es ${loader.chip.CHIP_NAME}. No se escribió nada.`);
+    const elegida = Number(velocidad.value);
+    const velocidades = elegida > 115200 ? [elegida, 115200] : [elegida];
+    for (let i = 0; i < velocidades.length; i++) {
+      const baudios = velocidades[i]!;
+      const estado: { fase: 'conectando' | 'escribiendo' } = { fase: 'conectando' };
+      transport = new Transport(port, false);
+      try {
+        // El borrado completo solo en el primer intento: después ya está borrada.
+        await intento(transport, baudios, borrarTodo.checked && i === 0, (f) => { estado.fase = f; });
+        break;
+      } catch (err) {
+        const ultimo = i === velocidades.length - 1;
+        if (estado.fase !== 'escribiendo' || ultimo) throw err;
+        const msg = err instanceof Error ? err.message : String(err);
+        linea(`\n> Falló la escritura a ${baudios}: ${msg}`);
+        linea('> Reintentando la escritura completa a 115200, más lenta pero más segura…\n');
+        aviso('info', 'Hubo un error de transmisión. Reintentando solo a velocidad segura (115200)…');
+        await transport.disconnect().catch(() => {});
+        transport = null;
+        await new Promise((r) => setTimeout(r, 800));
+      }
     }
-    const flash = await loader.detectFlashSize();
-    linea(`> Memoria flash: ${flash}`);
-    const mb = /^(\d+)MB$/.exec(flash);
-    if (mb && Number(mb[1]) < 4) {
-      throw new Error(`La placa tiene ${flash} de flash y esta imagen necesita 4MB. No se escribió nada.`);
-    }
-
-    if (borrarTodo.checked) {
-      aviso('info', 'Borrando toda la memoria (puede tardar hasta un minuto). No desconectes la placa.');
-      await loader.eraseFlash();
-      linea('> Memoria borrada por completo.');
-    }
-    aviso('info', 'Escribiendo el firmware. No desconectes la placa.');
-    await loader.writeFlash({
-      fileArray: [{ data: imagen, address: 0x0 }],
-      flashMode: 'keep',
-      flashFreq: 'keep',
-      flashSize: 'keep',
-      eraseAll: false,
-      compress: true,
-      reportProgress: (_i, escrito, total) => progreso((escrito / total) * 100),
-      calculateMD5Hash: md5Hex,
-    });
-    progreso(100);
-    linea('> Escritura verificada por el ESP32 (MD5).');
-    await loader.after('hard_reset');
     aviso('ok', manual.checked
       ? 'Listo. Pulsá EN/RST una vez para que arranque el firmware nuevo.'
       : 'Listo. El ESP32 se reinició con el firmware nuevo. Ya podés desenchufarlo.');
@@ -135,7 +168,7 @@ async function cargar() {
       aviso('error', todos.checked
         ? 'No se eligió ningún puerto. Si la lista estaba vacía, revisá el cable USB (que sea de datos) y el driver.'
         : 'No se eligió ningún puerto. Si la placa no aparecía, marcá "Mostrar todos los puertos" y probá de nuevo; si sigue sin aparecer, revisá el cable USB y el driver.');
-    } else if (/Failed to connect|Timeout|sync/i.test(msg)) {
+    } else if (/Failed to connect|sync/i.test(msg)) {
       if (!manual.checked) {
         manual.checked = true;
         actualizarManual();
@@ -145,8 +178,10 @@ async function cargar() {
       }
     } else if (/Failed to open|already open|in use/i.test(msg)) {
       aviso('error', 'El puerto está ocupado. Cerrá Arduino IDE, monitores serie u otras pestañas que lo usen.');
+    } else if (/status|Timeout|seq|checksum|MD5/i.test(msg)) {
+      aviso('error', 'La escritura falló incluso a velocidad segura: es un problema de la conexión USB. Probá otro cable (corto y de datos), otro puerto del computador sin hub, y volvé a pulsar Cargar.');
     } else {
-      aviso('error', `Falló: ${msg} Si fue durante la escritura, probá con 115200.`);
+      aviso('error', `Falló: ${msg}`);
     }
   } finally {
     if (transport) await transport.disconnect().catch(() => {});

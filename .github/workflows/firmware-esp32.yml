@@ -47,7 +47,8 @@ jobs:
           # Se usa el Chrome que ya trae el servidor de GitHub; si no está, solo el
           # navegador de Playwright (sus paquetes de sistema no existen para todas las versiones de Ubuntu).
           CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
-          if [ -z "$CHROME" ]; then npx playwright install chromium; else export CHROMIUM_EXECUTABLE_PATH="$CHROME"; fi
+          if [ -z "$CHROME" ]; then npx playwright install chromium; else echo "CHROMIUM_EXECUTABLE_PATH=$CHROME" >> "$GITHUB_ENV"; export CHROMIUM_EXECUTABLE_PATH="$CHROME"; fi
+          echo "PLAYWRIGHT_MODULE=$RUNNER_TEMP/pw/node_modules/playwright" >> "$GITHUB_ENV"
           echo "Navegador: ${CHROMIUM_EXECUTABLE_PATH:-chromium de Playwright}"
           cd "$GITHUB_WORKSPACE"
           export PLAYWRIGHT_MODULE="$RUNNER_TEMP/pw/node_modules/playwright"
@@ -103,6 +104,8 @@ jobs:
           npx tsc -p .
           node probar-md5.mjs
           npm run armar
+          # Carga completa contra un ESP32 simulado, incluido el error 201 y el reintento a 115200.
+          NODE_PATH="$RUNNER_TEMP/pw/node_modules:$PWD/node_modules" node probar-escritura.cjs
 
       - uses: actions/upload-artifact@v4
         with:
