@@ -71,6 +71,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     data.afr = 14.7;
     await page.waitForFunction(() => document.querySelectorAll('#cards .value')[11].textContent === '14.70');
     if (process.env.GOLF_SCREENSHOT) await page.screenshot({ path: process.env.GOLF_SCREENSHOT, fullPage: true });
+    // Diesel informado por la ECU (PID 51): la referencia del AFR cambia y se indica.
+    data.fuel = 'diesel'; data.reference = 14.5;
+    await page.waitForFunction(() => document.querySelector('#cards').lastElementChild.textContent.includes('14.50 (diesel, informado por la ECU)'));
     failLive = true;
     await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Sin respuesta del ESP32'));
     assert((await page.locator('#cards .value').allTextContents()).every(x => x === '—'));

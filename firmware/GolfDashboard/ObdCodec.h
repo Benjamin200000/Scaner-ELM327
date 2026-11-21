@@ -36,11 +36,67 @@ inline bool payload(const char* response, uint8_t pid, uint8_t* out, size_t coun
   return false;
 }
 
+// Mapa de PIDs disponibles. Si responden varias computadoras (motor, caja,
+// hibrido...) se suman sus mapas: quedarse con la primera linea podia marcar
+// como no disponibles datos del motor cuando la primera en responder era otra.
 inline bool bitmap(const char* response, uint8_t base, uint32_t& bits) {
-  uint8_t b[4];
-  if (!payload(response, base, b, 4)) return false;
-  bits = (uint32_t(b[0]) << 24) | (uint32_t(b[1]) << 16) | (uint32_t(b[2]) << 8) | b[3];
-  return true;
+  bool any = false;
+  uint32_t all = 0;
+  const char* line = response;
+  while (*line) {
+    const char* end = line;
+    while (*end && *end != '\r' && *end != '\n') ++end;
+    char one[160];
+    const size_t n = size_t(end - line) < sizeof(one) - 1 ? size_t(end - line) : sizeof(one) - 1;
+    for (size_t i = 0; i < n; ++i) one[i] = line[i];
+    one[n] = 0;
+    uint8_t b[4];
+    if (payload(one, base, b, 4)) {
+      all |= (uint32_t(b[0]) << 24) | (uint32_t(b[1]) << 16) | (uint32_t(b[2]) << 8) | b[3];
+      any = true;
+    }
+    line = *end ? end + 1 : end;
+  }
+  if (any) bits = all;
+  return any;
+}
+
+// Protocolo informado por ATDPN ("A6" = automatico, ISO 15765 CAN 11 bit 500k).
+// Devuelve 1..9 (A = J1939 se devuelve 10) o 0 si no se entiende.
+inline uint8_t protocolNumber(const char* response) {
+  const char* p = response;
+  while (*p && (isspace(static_cast<unsigned char>(*p)) || *p == '>')) ++p;
+  if (*p == 'A' || *p == 'a') {
+    const int next = hex(p[1]);
+    if (next >= 1 && next <= 10) ++p;  // "A6": automatico + protocolo 6
+  }
+  const int v = hex(*p);
+  return v >= 1 && v <= 10 ? uint8_t(v) : 0;
+}
+inline bool isCan11(uint8_t protocol) { return protocol == 6 || protocol == 8; }
+inline bool isCan29(uint8_t protocol) { return protocol == 7 || protocol == 9; }
+
+// Tipo de combustible (PID 51, SAE J1979) y su relacion aire/combustible
+// estequiometrica de referencia. 0 = desconocido o mezcla: usar la configurada.
+inline float stoichForFuel(uint8_t fuel) {
+  switch (fuel) {
+    case 1: return 14.7f;  // gasolina
+    case 2: return 6.4f;   // metanol
+    case 3: return 9.0f;   // etanol
+    case 4: return 14.5f;  // diesel
+    case 5: return 15.5f;  // GLP
+    case 6: return 17.2f;  // GNC
+    case 7: return 15.6f;  // propano
+    default: return 0.0f;
+  }
+}
+inline const char* fuelName(uint8_t fuel) {
+  switch (fuel) {
+    case 1: return "gasolina"; case 2: return "metanol"; case 3: return "etanol";
+    case 4: return "diesel"; case 5: return "GLP"; case 6: return "GNC";
+    case 7: return "propano"; case 8: return "electrico";
+    default: return "";
+  }
 }
 inline bool supported(uint32_t bits, uint8_t base, uint8_t pid) {
   return pid > base && pid <= base + 32 && (bits & (uint32_t(1) << (32 - (pid - base))));

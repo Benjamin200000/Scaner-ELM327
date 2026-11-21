@@ -87,6 +87,12 @@ bool parseMac(const char* text, uint8_t* bytes) {
   }
   return true;
 }
+// Relacion estequiometrica para el AFR calculado: la del combustible que informa
+// la ECU (PID 51); si no lo informa, la de Config (gasolina por defecto).
+float afrReference(const Dashboard& d) {
+  const float fromEcu = Obd::stoichForFuel(d.fuelType);
+  return fromEcu > 0 ? fromEcu : STOICHIOMETRIC_AFR;
+}
 String jsonText(const char* text) {
   String out = "\"";
   while (*text) {
@@ -104,12 +110,14 @@ void sendLive(AsyncWebServerRequest* request) {
   out = "{\"state\":" + jsonText(states[static_cast<unsigned>(d.link)]);
   out += ",\"page\":"+String(d.page)+",\"mask\":"+String(d.extraMask);
   out += ",\"rpmHz\":"+String(d.rpmHz,2)+",\"speedHz\":"+String(d.speedHz,2);
-  out += ",\"reference\":"+String(STOICHIOMETRIC_AFR,2)+",\"afr\":";
+  const float reference = afrReference(d);
+  out += ",\"fuel\":" + jsonText(Obd::fuelName(d.fuelType));
+  out += ",\"reference\":"+String(reference,2)+",\"afr\":";
   const Reading& lambda = d.fields[LAMBDA];
   const bool lambdaFast = d.page == 1;
   const bool lambdaFresh = lambda.valid && d.link == Link::Ready &&
     uint32_t(now-lambda.at) <= (lambdaFast ? FAST_STALE_MS : EXTRA_STALE_MS);
-  out += lambdaFresh ? String(lambda.value*STOICHIOMETRIC_AFR,2) : "null";
+  out += lambdaFresh ? String(lambda.value*reference,2) : "null";
   out += ",\"fields\":[";
   for (unsigned id = 0; id < FIELD_COUNT; ++id) {
     const Reading& r = d.fields[id];
@@ -283,6 +291,24 @@ bool initializeElm() {
     // Segundo intento tras el descubrimiento automatico del protocolo.
     if (!query(0x00, AUTO_PROTOCOL_MS) || !Obd::bitmap(response, 0x00, bits0)) return false;
   }
+  // En CAN se pregunta solo a la computadora del motor (7E0 / 18DA10F1): asi la
+  // caja u otras computadoras no responden encima. Si el motor no contesta con
+  // esa direccion, se vuelve a la consulta general de OBD-II.
+  if (at("ATDPN", false)) {
+    const uint8_t protocol = Obd::protocolNumber(response);
+    const char* engine = Obd::isCan11(protocol) ? "ATSH7E0" : Obd::isCan29(protocol) ? "ATSH18DA10F1" : nullptr;
+    const char* general = Obd::isCan11(protocol) ? "ATSH7DF" : "ATSH18DB33F1";
+    uint32_t engineBits = 0;
+    if (engine && at(engine) && query(0x00) && Obd::bitmap(response, 0x00, engineBits)) {
+      bits0 = engineBits;
+      Serial.printf("Protocolo %u (CAN): consultas dirigidas a la computadora del motor.\n", protocol);
+    } else if (engine) {
+      at(general);
+      Serial.printf("Protocolo %u (CAN): el motor no respondio por direccion; consulta general.\n", protocol);
+    } else {
+      Serial.printf("Protocolo %u: consulta general OBD-II.\n", protocol);
+    }
+  }
   for (FieldId id : {RPM, SPEED, COOLANT, MAF, IAT, MAP, LOAD, THROTTLE})
     setSupport(id, Obd::supported(bits0, 0x00, PIDS[id]) ? Support::Yes : Support::No);
 
@@ -291,6 +317,7 @@ bool initializeElm() {
   Support voltage = Support::Unknown;
   Support lambda = Support::Unknown;
   uint8_t lambdaPid = 0;
+  uint8_t fuelType = 0;
   if (!Obd::supported(bits0, 0x00, 0x20)) oil = lambda = voltage = Support::No;
   else {
     if (!query(0x20)) return false;
@@ -305,6 +332,10 @@ bool initializeElm() {
         if (Obd::bitmap(response, 0x40, bits40)) {
           oil = Obd::supported(bits40, 0x40, 0x5C) ? Support::Yes : Support::No;
           voltage = Obd::supported(bits40, 0x40, 0x42) ? Support::Yes : Support::No;
+          if (Obd::supported(bits40, 0x40, 0x51) && query(0x51)) {
+            uint8_t fuel = 0;
+            if (Obd::payload(response, 0x51, &fuel, 1)) fuelType = fuel;
+          }
         }
       }
     }
@@ -314,9 +345,11 @@ bool initializeElm() {
   setSupport(LAMBDA, lambda);
   portENTER_CRITICAL(&guard);
   shared.lambdaPid = lambdaPid;
+  shared.fuelType = fuelType;
   ++shared.revision;
   portEXIT_CRITICAL(&guard);
   Serial.printf("MAF PID10, lambda medida S1 PID%02X (00=no disponible).\n", lambdaPid);
+  if (fuelType) Serial.printf("Combustible informado por la ECU: %s (%u).\n", Obd::fuelName(fuelType), fuelType);
   if (!at("ATDPN", false)) return false;
   Serial.printf("Protocolo ELM (A=automatico): %s\n", response);
   return true;
@@ -481,7 +514,7 @@ void render(const Dashboard& d) {
     oled.setTextSize(1); oled.setCursor(0, 50); oled.print("AFR calc");
     oled.setTextSize(2); oled.setCursor(64, 46);
     Reading afr = d.fields[LAMBDA];
-    afr.value *= STOICHIOMETRIC_AFR;
+    afr.value *= afrReference(d);
     printValue(afr, now, FAST_STALE_MS, 2);
   }
   oled.display();

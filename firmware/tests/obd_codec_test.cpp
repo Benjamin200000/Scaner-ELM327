@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <string>
 #include "../GolfDashboard/ObdCodec.h"
 #include "../GolfDashboard/PollPlanner.h"
 
@@ -26,6 +27,20 @@ int main() {
   assert(Obd::supported(bits, 0x00, 0x20));
   assert(!Obd::supported(bits, 0x00, 0x00));
   assert(!Obd::supported(bits, 0x00, 0x21));
+  // Varias computadoras: se suman los mapas (caja responde primero, motor despues).
+  assert(Obd::bitmap("4100 80 00 00 01\r4100 18 18 00 01\r>", 0x00, bits));
+  assert(Obd::supported(bits, 0x00, 0x01) && Obd::supported(bits, 0x00, 0x0C) && Obd::supported(bits, 0x00, 0x05));
+  assert(Obd::bitmap("NO DATA\r410008180001\r", 0x00, bits) && Obd::supported(bits, 0x00, 0x0D));
+  assert(!Obd::bitmap("NO DATA\r>", 0x00, bits));
+  // Protocolo detectado por ATDPN.
+  assert(Obd::protocolNumber("A6\r>") == 6 && Obd::isCan11(Obd::protocolNumber("A6\r>")));
+  assert(Obd::protocolNumber("7\r") == 7 && Obd::isCan29(7));
+  assert(Obd::protocolNumber("A3\r") == 3 && !Obd::isCan11(3) && !Obd::isCan29(3));
+  assert(Obd::protocolNumber("A\r") == 10);
+  assert(Obd::protocolNumber("?\r") == 0);
+  // Combustible informado por la ECU.
+  assert(Obd::stoichForFuel(1) == 14.7f && Obd::stoichForFuel(4) == 14.5f && Obd::stoichForFuel(9) == 0.0f);
+  assert(std::string(Obd::fuelName(4)) == "diesel");
   assert(Obd::bitmap("414000000010\r", 0x40, bits));
   assert(Obd::supported(bits, 0x40, 0x5C));
   assert(!Obd::supported(bits, 0x40, 0x5B));

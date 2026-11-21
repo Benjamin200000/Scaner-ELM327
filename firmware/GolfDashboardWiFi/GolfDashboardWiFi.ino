@@ -34,7 +34,7 @@ async function setPage(p){try{await post('/api/page',{page:p});message('Página 
 async function applyExtras(){let mask=0;document.querySelectorAll('#extras input:checked').forEach(x=>mask|=1<<Number(x.value));try{await post('/api/extras',{mask});message('Selección aplicada.')}catch(e){message(e.message)}}
 async function clearExtras(){document.querySelectorAll('#extras input').forEach(x=>x.checked=false);await applyExtras()}
 function show(f){if(f.support===0)return 'N/D';if(f.value===null)return '—';if(f.stale)return 'Antiguo';return Number(f.value).toFixed(f.digits)}
-async function poll(){if(busy||Date.now()<retryAt)return;busy=true;try{const r=await fetch('/api/live',{cache:'no-store',signal:AbortSignal.timeout(3000)});if(!r.ok)throw Error('Sin respuesta del ESP32');const d=await r.json();document.querySelector('#status').textContent=d.state+' · OLED '+(d.page+1)+'/2 · RPM '+d.rpmHz.toFixed(1)+' Hz · velocidad '+d.speedHz.toFixed(1)+' Hz'+(d.state==='Conectando Bluetooth'?'. Si no encuentra el ELM327, escribí abajo su nombre Bluetooth exacto y guardá.':'');if(!initialized){names.forEach((n,i)=>{const c=document.createElement('div');c.className='card';c.innerHTML='<div></div><div class="value"></div><div class="unit"></div><div class="age"></div>';c.children[0].textContent=n;c.children[2].textContent=units[i];cards.append(c);const label=document.createElement('label');const box=document.createElement('input');box.type='checkbox';box.value=i;box.checked=Boolean(d.mask&(1<<i));box.disabled=d.fields[i].support!==1;label.append(box,document.createTextNode(' '+n));extra.append(label)});const afr=document.createElement('div');afr.className='card';afr.innerHTML='<div>AFR calculado</div><div class="value"></div><small></small>';cards.append(afr);initialized=true}d.fields.forEach((f,i)=>{const c=cards.children[i];c.children[1].textContent=show(f);c.children[1].classList.toggle('bad',f.stale);c.children[3].textContent=f.age===null?'Sin medición':'Hace '+(f.age/1000).toFixed(1)+' s';extra.children[i].querySelector('input').disabled=f.support!==1});const a=cards.lastElementChild;a.children[1].textContent=d.fields[5].stale?'Antiguo':d.afr===null?'N/D':d.afr.toFixed(2);a.children[2].textContent='Lambda × '+d.reference.toFixed(2)+' (referencia de combustible)'}catch(e){retryAt=Date.now()+2000;document.querySelector('#status').textContent='Sin respuesta del ESP32; reintentando…';document.querySelectorAll('.value').forEach(x=>x.textContent='—')}finally{busy=false}}
+async function poll(){if(busy||Date.now()<retryAt)return;busy=true;try{const r=await fetch('/api/live',{cache:'no-store',signal:AbortSignal.timeout(3000)});if(!r.ok)throw Error('Sin respuesta del ESP32');const d=await r.json();document.querySelector('#status').textContent=d.state+' · OLED '+(d.page+1)+'/2 · RPM '+d.rpmHz.toFixed(1)+' Hz · velocidad '+d.speedHz.toFixed(1)+' Hz'+(d.state==='Conectando Bluetooth'?'. Si no encuentra el ELM327, escribí abajo su nombre Bluetooth exacto y guardá.':'');if(!initialized){names.forEach((n,i)=>{const c=document.createElement('div');c.className='card';c.innerHTML='<div></div><div class="value"></div><div class="unit"></div><div class="age"></div>';c.children[0].textContent=n;c.children[2].textContent=units[i];cards.append(c);const label=document.createElement('label');const box=document.createElement('input');box.type='checkbox';box.value=i;box.checked=Boolean(d.mask&(1<<i));box.disabled=d.fields[i].support!==1;label.append(box,document.createTextNode(' '+n));extra.append(label)});const afr=document.createElement('div');afr.className='card';afr.innerHTML='<div>AFR calculado</div><div class="value"></div><small></small>';cards.append(afr);initialized=true}d.fields.forEach((f,i)=>{const c=cards.children[i];c.children[1].textContent=show(f);c.children[1].classList.toggle('bad',f.stale);c.children[3].textContent=f.age===null?'Sin medición':'Hace '+(f.age/1000).toFixed(1)+' s';extra.children[i].querySelector('input').disabled=f.support!==1});const a=cards.lastElementChild;a.children[1].textContent=d.fields[5].stale?'Antiguo':d.afr===null?'N/D':d.afr.toFixed(2);a.children[2].textContent='Lambda × '+d.reference.toFixed(2)+(d.fuel?' ('+d.fuel+', informado por la ECU)':' (referencia configurada)')}catch(e){retryAt=Date.now()+2000;document.querySelector('#status').textContent='Sin respuesta del ESP32; reintentando…';document.querySelectorAll('.value').forEach(x=>x.textContent='—')}finally{busy=false}}
 document.querySelector('#config').onsubmit=async e=>{e.preventDefault();try{message(await post('/api/config',{name:document.querySelector('#name').value,mac:document.querySelector('#mac').value,pin:document.querySelector('#pin').value}));document.querySelector('#pin').value=''}catch(err){message(err.message)}};
 function loadConfig(n){fetch('/api/config',{cache:'no-store',signal:AbortSignal.timeout(4000)}).then(r=>r.json()).then(c=>{const name=document.querySelector('#name'),mac=document.querySelector('#mac');if(!name.value)name.value=c.name;if(!mac.value)mac.value=c.mac;message('')}).catch(()=>{if(n<10){message('Cargando configuración…');setTimeout(()=>loadConfig(n+1),2000)}else message('No se pudo cargar la configuración; podés escribir el nombre igual.')})}
 loadConfig(0);
@@ -64,6 +64,7 @@ struct Dashboard {
   Reading fields[FIELD_COUNT];
   uint8_t page = 0;
   uint8_t lambdaPid = 0; // Solo sensor 1: 0x24 (voltaje) o 0x34 (corriente).
+  uint8_t fuelType = 0;  // PID 51 informado por la ECU; 0 = desconocido.
   uint32_t extraMask = 0; // Elegidos desde el movil; cero conserva prioridad original.
   Link link = Link::Connecting;
   uint32_t revision = 0;
@@ -146,11 +147,67 @@ static bool payload(const char* response, uint8_t pid, uint8_t* out, size_t coun
   return false;
 }
 
+// Mapa de PIDs disponibles. Si responden varias computadoras (motor, caja,
+// hibrido...) se suman sus mapas: quedarse con la primera linea podia marcar
+// como no disponibles datos del motor cuando la primera en responder era otra.
 static bool bitmap(const char* response, uint8_t base, uint32_t& bits) {
-  uint8_t b[4];
-  if (!payload(response, base, b, 4)) return false;
-  bits = (uint32_t(b[0]) << 24) | (uint32_t(b[1]) << 16) | (uint32_t(b[2]) << 8) | b[3];
-  return true;
+  bool any = false;
+  uint32_t all = 0;
+  const char* line = response;
+  while (*line) {
+    const char* end = line;
+    while (*end && *end != '\r' && *end != '\n') ++end;
+    char one[160];
+    const size_t n = size_t(end - line) < sizeof(one) - 1 ? size_t(end - line) : sizeof(one) - 1;
+    for (size_t i = 0; i < n; ++i) one[i] = line[i];
+    one[n] = 0;
+    uint8_t b[4];
+    if (payload(one, base, b, 4)) {
+      all |= (uint32_t(b[0]) << 24) | (uint32_t(b[1]) << 16) | (uint32_t(b[2]) << 8) | b[3];
+      any = true;
+    }
+    line = *end ? end + 1 : end;
+  }
+  if (any) bits = all;
+  return any;
+}
+
+// Protocolo informado por ATDPN ("A6" = automatico, ISO 15765 CAN 11 bit 500k).
+// Devuelve 1..9 (A = J1939 se devuelve 10) o 0 si no se entiende.
+static uint8_t protocolNumber(const char* response) {
+  const char* p = response;
+  while (*p && (isspace(static_cast<unsigned char>(*p)) || *p == '>')) ++p;
+  if (*p == 'A' || *p == 'a') {
+    const int next = hex(p[1]);
+    if (next >= 1 && next <= 10) ++p;  // "A6": automatico + protocolo 6
+  }
+  const int v = hex(*p);
+  return v >= 1 && v <= 10 ? uint8_t(v) : 0;
+}
+static bool isCan11(uint8_t protocol) { return protocol == 6 || protocol == 8; }
+static bool isCan29(uint8_t protocol) { return protocol == 7 || protocol == 9; }
+
+// Tipo de combustible (PID 51, SAE J1979) y su relacion aire/combustible
+// estequiometrica de referencia. 0 = desconocido o mezcla: usar la configurada.
+static float stoichForFuel(uint8_t fuel) {
+  switch (fuel) {
+    case 1: return 14.7f;  // gasolina
+    case 2: return 6.4f;   // metanol
+    case 3: return 9.0f;   // etanol
+    case 4: return 14.5f;  // diesel
+    case 5: return 15.5f;  // GLP
+    case 6: return 17.2f;  // GNC
+    case 7: return 15.6f;  // propano
+    default: return 0.0f;
+  }
+}
+static const char* fuelName(uint8_t fuel) {
+  switch (fuel) {
+    case 1: return "gasolina"; case 2: return "metanol"; case 3: return "etanol";
+    case 4: return "diesel"; case 5: return "GLP"; case 6: return "GNC";
+    case 7: return "propano"; case 8: return "electrico";
+    default: return "";
+  }
 }
 static bool supported(uint32_t bits, uint8_t base, uint8_t pid) {
   return pid > base && pid <= base + 32 && (bits & (uint32_t(1) << (32 - (pid - base))));
@@ -294,6 +351,12 @@ bool parseMac(const char* text, uint8_t* bytes) {
   }
   return true;
 }
+// Relacion estequiometrica para el AFR calculado: la del combustible que informa
+// la ECU (PID 51); si no lo informa, la de Config (gasolina por defecto).
+float afrReference(const Dashboard& d) {
+  const float fromEcu = Obd::stoichForFuel(d.fuelType);
+  return fromEcu > 0 ? fromEcu : STOICHIOMETRIC_AFR;
+}
 String jsonText(const char* text) {
   String out = "\"";
   while (*text) {
@@ -311,12 +374,14 @@ void sendLive(AsyncWebServerRequest* request) {
   out = "{\"state\":" + jsonText(states[static_cast<unsigned>(d.link)]);
   out += ",\"page\":"+String(d.page)+",\"mask\":"+String(d.extraMask);
   out += ",\"rpmHz\":"+String(d.rpmHz,2)+",\"speedHz\":"+String(d.speedHz,2);
-  out += ",\"reference\":"+String(STOICHIOMETRIC_AFR,2)+",\"afr\":";
+  const float reference = afrReference(d);
+  out += ",\"fuel\":" + jsonText(Obd::fuelName(d.fuelType));
+  out += ",\"reference\":"+String(reference,2)+",\"afr\":";
   const Reading& lambda = d.fields[LAMBDA];
   const bool lambdaFast = d.page == 1;
   const bool lambdaFresh = lambda.valid && d.link == Link::Ready &&
     uint32_t(now-lambda.at) <= (lambdaFast ? FAST_STALE_MS : EXTRA_STALE_MS);
-  out += lambdaFresh ? String(lambda.value*STOICHIOMETRIC_AFR,2) : "null";
+  out += lambdaFresh ? String(lambda.value*reference,2) : "null";
   out += ",\"fields\":[";
   for (unsigned id = 0; id < FIELD_COUNT; ++id) {
     const Reading& r = d.fields[id];
@@ -490,6 +555,24 @@ bool initializeElm() {
     // Segundo intento tras el descubrimiento automatico del protocolo.
     if (!query(0x00, AUTO_PROTOCOL_MS) || !Obd::bitmap(response, 0x00, bits0)) return false;
   }
+  // En CAN se pregunta solo a la computadora del motor (7E0 / 18DA10F1): asi la
+  // caja u otras computadoras no responden encima. Si el motor no contesta con
+  // esa direccion, se vuelve a la consulta general de OBD-II.
+  if (at("ATDPN", false)) {
+    const uint8_t protocol = Obd::protocolNumber(response);
+    const char* engine = Obd::isCan11(protocol) ? "ATSH7E0" : Obd::isCan29(protocol) ? "ATSH18DA10F1" : nullptr;
+    const char* general = Obd::isCan11(protocol) ? "ATSH7DF" : "ATSH18DB33F1";
+    uint32_t engineBits = 0;
+    if (engine && at(engine) && query(0x00) && Obd::bitmap(response, 0x00, engineBits)) {
+      bits0 = engineBits;
+      Serial.printf("Protocolo %u (CAN): consultas dirigidas a la computadora del motor.\n", protocol);
+    } else if (engine) {
+      at(general);
+      Serial.printf("Protocolo %u (CAN): el motor no respondio por direccion; consulta general.\n", protocol);
+    } else {
+      Serial.printf("Protocolo %u: consulta general OBD-II.\n", protocol);
+    }
+  }
   for (FieldId id : {RPM, SPEED, COOLANT, MAF, IAT, MAP, LOAD, THROTTLE})
     setSupport(id, Obd::supported(bits0, 0x00, PIDS[id]) ? Support::Yes : Support::No);
 
@@ -498,6 +581,7 @@ bool initializeElm() {
   Support voltage = Support::Unknown;
   Support lambda = Support::Unknown;
   uint8_t lambdaPid = 0;
+  uint8_t fuelType = 0;
   if (!Obd::supported(bits0, 0x00, 0x20)) oil = lambda = voltage = Support::No;
   else {
     if (!query(0x20)) return false;
@@ -512,6 +596,10 @@ bool initializeElm() {
         if (Obd::bitmap(response, 0x40, bits40)) {
           oil = Obd::supported(bits40, 0x40, 0x5C) ? Support::Yes : Support::No;
           voltage = Obd::supported(bits40, 0x40, 0x42) ? Support::Yes : Support::No;
+          if (Obd::supported(bits40, 0x40, 0x51) && query(0x51)) {
+            uint8_t fuel = 0;
+            if (Obd::payload(response, 0x51, &fuel, 1)) fuelType = fuel;
+          }
         }
       }
     }
@@ -521,9 +609,11 @@ bool initializeElm() {
   setSupport(LAMBDA, lambda);
   portENTER_CRITICAL(&guard);
   shared.lambdaPid = lambdaPid;
+  shared.fuelType = fuelType;
   ++shared.revision;
   portEXIT_CRITICAL(&guard);
   Serial.printf("MAF PID10, lambda medida S1 PID%02X (00=no disponible).\n", lambdaPid);
+  if (fuelType) Serial.printf("Combustible informado por la ECU: %s (%u).\n", Obd::fuelName(fuelType), fuelType);
   if (!at("ATDPN", false)) return false;
   Serial.printf("Protocolo ELM (A=automatico): %s\n", response);
   return true;
@@ -688,7 +778,7 @@ void render(const Dashboard& d) {
     oled.setTextSize(1); oled.setCursor(0, 50); oled.print("AFR calc");
     oled.setTextSize(2); oled.setCursor(64, 46);
     Reading afr = d.fields[LAMBDA];
-    afr.value *= STOICHIOMETRIC_AFR;
+    afr.value *= afrReference(d);
     printValue(afr, now, FAST_STALE_MS, 2);
   }
   oled.display();

@@ -36,6 +36,16 @@ Se entrega tambien **GolfDashboardWiFi.ino**, un archivo unico que contiene los 
 - Si el iPhone tenia guardada la red con otra clave: Ajustes > Wi-Fi > (i) > Omitir esta red, y volver a unirse.
 - La red acepta hasta 4 equipos a la vez.
 
+### Otros vehiculos (no solo VAG)
+
+El firmware no depende de la marca: usa deteccion automatica de protocolo (`ATSP0`: CAN 11/29 bit, ISO 9141, KWP2000 y J1850) y solo datos OBD-II estandar (modo 01).
+
+- En CAN, tras detectar el protocolo, pregunta solo a la computadora del motor (7E0, o 18DA10F1 en 29 bit). Asi la caja automatica u otras computadoras no responden encima, algo comun en camionetas Toyota, Ford, Mitsubishi o Nissan. Si el motor no contesta por esa direccion, vuelve a la consulta general.
+- En los otros protocolos, si responden varias computadoras, se suman sus mapas de datos disponibles.
+- El AFR calculado usa la relacion estequiometrica del combustible que informa la ECU (PID 51: gasolina 14,7; diesel 14,5; GLP 15,5; GNC 17,2; etanol 9,0). Si no lo informa, usa `STOICHIOMETRIC_AFR` de Config.h.
+- Lo que la ECU no ofrece aparece como N/D. Muchos diesel no informan lambda de banda ancha ni temperatura de aceite por OBD-II estandar.
+- Requiere un vehiculo con OBD-II/EOBD (en general gasolina desde 2001 y diesel desde 2004 en Europa; en Chile depende del mercado de origen del modelo).
+
 ## Dos paginas: un solo programa
 
 Se carga una sola vez `GolfDashboard.ino`; no se necesitan dos pantallas fisicas ni dos programas.
