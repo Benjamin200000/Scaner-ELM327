@@ -81,10 +81,17 @@ async function cargar() {
       terminal: { clean: () => { log.textContent = ''; }, writeLine: linea, write: escribir },
     });
 
+    // En Windows, abrir el puerto ya reinicia la placa: por eso el modo manual
+    // no evita el reinicio, sino que da tiempo (unos 30 s) a tener BOOT apretado
+    // mientras ocurre. Con BOOT abajo, cualquier reinicio entra en modo carga.
+    const intentos = manual.checked ? 30 : 12;
+    const conectar = loader.connect.bind(loader);
+    loader.connect = (modo = 'default_reset', _a = 7, detectar = true) => conectar(modo, intentos, detectar);
     aviso('info', manual.checked
-      ? 'Modo manual: hablando con la placa sin reiniciarla…'
+      ? 'Mantené BOOT apretado. Si sigue en "Connecting...", sin soltar BOOT tocá EN una vez.'
       : 'Conectando con el ESP32… (la placa se reinicia sola en modo carga)');
-    const chip = await loader.main(manual.checked ? 'no_reset' : 'default_reset');
+    const chip = await loader.main('default_reset');
+    if (manual.checked) aviso('info', 'Conectado: ya podés soltar BOOT.');
     linea(`\n> Chip detectado: ${chip}`);
     if (loader.chip.CHIP_NAME !== 'ESP32') {
       throw new Error(`Esta imagen es para ESP32 original y la placa es ${loader.chip.CHIP_NAME}. No se escribió nada.`);
@@ -131,9 +138,9 @@ async function cargar() {
       if (!manual.checked) {
         manual.checked = true;
         actualizarManual();
-        aviso('error', 'La placa no entró sola en modo carga. Activé el modo manual: seguí los 3 pasos de abajo y volvé a pulsar Cargar.');
+        aviso('error', 'La placa no entró sola en modo carga. Activé el modo manual: seguí los pasos de abajo y volvé a pulsar Cargar.');
       } else {
-        aviso('error', 'Sigue sin responder. Repetí los 3 pasos (BOOT apretado mientras tocás EN). Si nunca responde: otro cable USB, otro puerto del PC, o cerrá Arduino IDE.');
+        aviso('error', 'Sigue sin responder. Probá de nuevo con BOOT apretado todo el tiempo y tocando EN durante "Connecting...". Si nunca responde: otro puerto USB del PC, otro cable, o velocidad 115200.');
       }
     } else if (/Failed to open|already open|in use/i.test(msg)) {
       aviso('error', 'El puerto está ocupado. Cerrá Arduino IDE, monitores serie u otras pestañas que lo usen.');
