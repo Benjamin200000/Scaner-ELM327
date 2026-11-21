@@ -35,6 +35,13 @@ npm run typecheck && npm test
 npm run armar
 ```
 
-`probar-pagina.cjs`, `probar-danado.cjs` y `probar-manual.cjs` (con un ESP32 simulado que responde sincronización e identificación del chip) prueban la página en Chromium con
+`probar-pagina.cjs`, `probar-danado.cjs`, `probar-manual.cjs`, `probar-windows.cjs` y `probar-consola.cjs` (con un ESP32 simulado que responde sincronización e identificación del chip) prueban la página en Chromium con
 puertos simulados: carga, cancelación, placa que no responde e imagen
 alterada. No reemplazan una carga en una placa real.
+
+## Ver mensajes de la placa
+
+El botón **Ver mensajes de la placa** abre el puerto a 115200 baudios,
+reinicia el ESP32 y muestra lo que escribe al arrancar (si levantó el Wi-Fi,
+si busca el ELM, reinicios por falta de energía o fallas). **Copiar texto**
+lo copia para pegarlo en un reporte.

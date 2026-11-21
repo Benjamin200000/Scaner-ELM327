@@ -59,6 +59,7 @@ async function verificarImagen(): Promise<boolean> {
 
 async function cargar() {
   boton.disabled = true;
+  botonConsola.disabled = true;
   velocidad.disabled = true;
   borrarTodo.disabled = true;
   log.textContent = '';
@@ -150,6 +151,7 @@ async function cargar() {
   } finally {
     if (transport) await transport.disconnect().catch(() => {});
     boton.disabled = false;
+    botonConsola.disabled = false;
     velocidad.disabled = false;
     borrarTodo.disabled = false;
   }
@@ -157,6 +159,69 @@ async function cargar() {
 
 function PUERTOS_NOMBRE(vid: number): string {
   return PUENTES[vid] ?? 'chip USB-serie';
+}
+
+// ---- Consola: ver lo que la placa escribe por el puerto serie (115200) ----
+const botonConsola = $<HTMLButtonElement>('consola');
+const botonCopiar = $<HTMLButtonElement>('copiar');
+let consolaPuerto: SerialPort | null = null;
+let consolaLector: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+async function detenerConsola() {
+  const lector = consolaLector, puerto = consolaPuerto;
+  consolaLector = null; consolaPuerto = null;
+  try { await lector?.cancel(); } catch { /* ya cerrado */ }
+  try { lector?.releaseLock(); } catch { /* ya liberado */ }
+  try { await puerto?.close(); } catch { /* ya cerrado */ }
+  botonConsola.textContent = 'Ver mensajes de la placa';
+  boton.disabled = false;
+}
+
+async function verConsola() {
+  if (consolaPuerto) { await detenerConsola(); aviso('info', 'Consola detenida.'); return; }
+  try {
+    const port = await navigator.serial.requestPort(
+      todos.checked ? {} : { filters: Object.keys(PUENTES).map((v) => ({ usbVendorId: Number(v) })) },
+    );
+    if (port.getInfo().usbVendorId === undefined) throw new Error('PUERTO_BLUETOOTH');
+    await port.open({ baudRate: 115200 });
+    consolaPuerto = port;
+    boton.disabled = true;
+    botonConsola.textContent = 'Detener';
+    log.textContent = '';
+    // Reinicio normal (EN abajo y arriba, BOOT suelto) para ver el arranque completo.
+    await port.setSignals({ dataTerminalReady: false, requestToSend: true });
+    await new Promise((r) => setTimeout(r, 120));
+    await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+    aviso('info', 'Mostrando lo que escribe la placa. Si no aparece nada, tocá EN/RST. Pulsá Detener al terminar.');
+    const texto = new TextDecoder();
+    consolaLector = port.readable!.getReader();
+    for (;;) {
+      const { value, done } = await consolaLector.read();
+      if (done) break;
+      if (value) escribir(texto.decode(value, { stream: true }));
+      if (log.textContent!.length > 200000) log.textContent = log.textContent!.slice(-100000);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg === 'PUERTO_BLUETOOTH') aviso('error', 'Ese puerto es Bluetooth, no el USB de la placa.');
+    else if (/No port selected|cancel/i.test(msg)) aviso('error', 'No se eligió ningún puerto.');
+    else if (/Failed to open|already open|in use/i.test(msg)) aviso('error', 'El puerto está ocupado. Cerrá Arduino IDE u otras pestañas que lo usen.');
+    else if (consolaPuerto) aviso('error', `Se cortó la lectura: ${msg}`);
+  } finally {
+    if (consolaPuerto) await detenerConsola();
+  }
+}
+
+async function copiarConsola() {
+  try {
+    await navigator.clipboard.writeText(log.textContent ?? '');
+    aviso('ok', 'Copiado. Pegalo en el chat.');
+  } catch {
+    const r = document.createRange(); r.selectNodeContents(log);
+    const sel = getSelection(); sel?.removeAllRanges(); sel?.addRange(r);
+    aviso('info', 'Texto seleccionado: copialo con Ctrl+C.');
+  }
 }
 
 async function iniciar() {
@@ -172,6 +237,9 @@ async function iniciar() {
   aviso('info', 'Imagen verificada. Enchufá el ESP32 y pulsá Cargar.');
   boton.disabled = false;
   boton.addEventListener('click', () => void cargar());
+  botonConsola.disabled = false;
+  botonConsola.addEventListener('click', () => void verConsola());
+  botonCopiar.addEventListener('click', () => void copiarConsola());
 }
 
 void iniciar();

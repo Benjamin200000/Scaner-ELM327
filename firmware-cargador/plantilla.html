@@ -25,6 +25,7 @@ li { margin: 4px 0; }
 .fila { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 12px 26px;
   font-size: 16px; font-weight: 600; cursor: pointer; }
+button.secundario { background: transparent; color: var(--accent); border: 1px solid var(--accent); padding: 8px 16px; font-size: 14px; }
 button:disabled { opacity: .45; cursor: default; }
 label { color: var(--dim); font-size: 13px; }
 select { font-size: 14px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
@@ -91,6 +92,10 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
   </section>
 
   <section>
+    <div class="fila" style="margin-bottom:10px">
+      <button id="consola" class="secundario" disabled>Ver mensajes de la placa</button>
+      <button id="copiar" class="secundario">Copiar texto</button>
+    </div>
     <pre id="log"></pre>
   </section>
 
