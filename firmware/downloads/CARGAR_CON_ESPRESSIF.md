@@ -4,7 +4,7 @@ Para ESP32-WROOM-32 de 4 MB, ESP32 original (ESP32-D0WD), NO ESP32-C3 ni ESP32-S
 
 ## Descargar
 
-[Descargar imagen completa .bin](https://github.com/Benjamin200000/Scaner-ELM327/raw/refs/heads/main/firmware/downloads/GolfDashboard-ESP32-WROOM32-v3-4MB.bin)
+[Descargar imagen completa .bin](GolfDashboard-ESP32-WROOM32-4MB.bin)
 
 El archivo debe medir exactamente **4.194.304 bytes (4 MiB)**. El repositorio es privado: iniciar sesion en GitHub. Si no empieza la descarga, abrir el archivo en GitHub y usar **Download raw file**.
 
@@ -15,7 +15,7 @@ Esta imagen escribe la flash completa y reemplaza el programa y la configuracion
 1. Abrir la herramienta seleccionando **ChipType: ESP32**. La ventana debe indicar ESP32, no ESP32C3. Si la herramienta solo admite C3, descargar Flash Download Tools para ESP32 desde https://www.espressif.com/en/support/download/other-tools
 2. Si pregunta, elegir **WorkMode: Develop** y **LoadMode: UART**.
 3. Conectar el ESP32 por USB de datos. Cerrar Monitor serie/Arduino IDE si ocupan el puerto.
-4. En la primera fila, elegir `GolfDashboard-ESP32-WROOM32-v3-4MB.bin`, marcar la casilla izquierda y escribir **0x0** en la direccion a la derecha de @. El binario ya incluye bootloader, tabla de particiones y aplicacion. Se carga en una sola fila.
+4. En la primera fila, elegir `GolfDashboard-ESP32-WROOM32-4MB.bin`, marcar la casilla izquierda y escribir **0x0** en la direccion a la derecha de @. El binario ya incluye bootloader, tabla de particiones y aplicacion. Se carga en una sola fila.
 5. **SPI SPEED: 40 MHz**; **SPI MODE: DIO**; mantener **DoNotChgBin** marcado.
 6. Seleccionar el **COM** de la placa y **BAUD: 115200**.
 7. Pulsar **START**. Si no conecta, mantener **BOOT**, dar un toque a **EN/RESET** y soltar BOOT cuando comience la escritura.

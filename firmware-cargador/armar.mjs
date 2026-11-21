@@ -2,10 +2,16 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { build } from 'esbuild';
 
-const [, , binPath, salida] = process.argv;
+// Uso: node armar.mjs <imagen.bin> <salida.html> [archivo-SHA256.txt]
+// Si se da el archivo SHA256, la imagen tiene que coincidir con él.
+const [, , binPath, salida, shaPath] = process.argv;
 const bin = readFileSync(binPath);
 const sha = createHash('sha256').update(bin).digest('hex');
-if (sha !== '4388ee8ee732e3af786e6d8aa21ef8117911f94ec8a74c7eb48c69488b1509b6') throw new Error('Imagen distinta a la publicada');
+if (shaPath) {
+  const esperado = readFileSync(shaPath, 'utf8').trim().split(/\s+/)[0];
+  if (sha !== esperado) throw new Error(`Imagen distinta a la publicada: ${sha} != ${esperado}`);
+}
+if (bin.length !== 4 * 1024 * 1024) throw new Error(`La imagen debe medir 4 MiB y mide ${bin.length}`);
 let fin = bin.length;
 while (fin > 0 && bin[fin - 1] === 0xff) fin--;
 fin = Math.ceil(fin / 4) * 4;

@@ -1,8 +1,18 @@
 # Descargar Golf Dashboard ESP32 Wi-Fi v3
 
+## Lo más fácil: cargador web, sin instalar nada
+
+[`firmware-cargador/Cargar-GolfDashboard-ESP32.html`](../../firmware-cargador/Cargar-GolfDashboard-ESP32.html):
+descargarlo (Download raw file) y abrirlo con doble clic en Chrome o Edge.
+Trae esta misma imagen adentro y la verifica antes y después de escribir.
+
+La imagen y el cargador los compila el workflow **Firmware ESP32** desde
+`firmware/GolfDashboardWiFi/`; `GolfDashboard-ESP32-WROOM32-manifest.json`
+indica de qué commit salieron.
+
 ## Imagen lista para Flash Download Tool (sin Arduino IDE)
 
-[Descargar .bin para ESP32-WROOM-32](https://github.com/Benjamin200000/Scaner-ELM327/raw/refs/heads/main/firmware/downloads/GolfDashboard-ESP32-WROOM32-v3-4MB.bin)
+[Descargar .bin para ESP32-WROOM-32](GolfDashboard-ESP32-WROOM32-4MB.bin)
 
 [Instrucciones para cargarlo](CARGAR_CON_ESPRESSIF.md). Imagen completa de 4 MiB, ESP32 original, DIO, 40 MHz y direccion **0x0**. Reemplaza programa/configuracion anteriores. No es para ESP32-C3/S3.
 

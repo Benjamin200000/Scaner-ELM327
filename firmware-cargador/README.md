@@ -15,7 +15,7 @@ la biblioteca oficial de Espressif, empaquetada dentro del archivo.
 
 Antes de escribir:
 - comprueba que el firmware incluido sea idéntico a
-  `firmware/downloads/GolfDashboard-ESP32-WROOM32-v3-4MB.bin` (SHA-256);
+  `firmware/downloads/GolfDashboard-ESP32-WROOM32-4MB.bin` (SHA-256);
 - comprueba que la placa sea ESP32 original y tenga al menos 4 MB.
 
 Después de escribir, el ESP32 calcula el MD5 de lo escrito y se compara.
@@ -26,7 +26,7 @@ configuración guardada (NVS, 0x9000) sí queda dentro y se borra.
 
 ## Armar
 
-Para regenerarlo (la imagen está en `firmware/downloads/` de la rama `main`):
+Lo regenera el workflow **Firmware ESP32** cada vez que cambia el firmware. Para hacerlo a mano:
 
 ```bash
 cd firmware-cargador

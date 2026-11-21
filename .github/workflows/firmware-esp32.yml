@@ -1,0 +1,106 @@
+name: Firmware ESP32
+
+# Compila Golf Dashboard con el mismo core y bibliotecas documentados en
+# firmware/README.md, verifica la imagen completa y arma el cargador web.
+# En la rama de trabajo, deja la imagen y el cargador listos en el repositorio.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'firmware/GolfDashboard/**'
+      - 'firmware/GolfDashboardWiFi/**'
+      - 'firmware/tests/**'
+      - 'firmware/tools/**'
+      - 'firmware-cargador/src/**'
+      - 'firmware-cargador/*.mjs'
+      - 'firmware-cargador/plantilla.html'
+      - '.github/workflows/firmware-esp32.yml'
+
+permissions:
+  contents: write
+
+env:
+  ESP32_INDEX: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+  FQBN: esp32:esp32:esp32:PartitionScheme=huge_app,FlashSize=4M,CPUFreq=240,FlashMode=dio,FlashFreq=40
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pruebas del analizador OBD (sin hardware)
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined firmware/tests/obd_codec_test.cpp -o obd-test
+          ./obd-test
+
+      - name: Instalar arduino-cli, core ESP32 3.3.4 y bibliotecas
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://github.com/arduino/arduino-cli/releases/download/v1.3.1/arduino-cli_1.3.1_Linux_64bit.tar.gz | tar xz -C "$HOME/bin" arduino-cli
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/bin:$PATH"
+          arduino-cli core update-index --additional-urls "$ESP32_INDEX"
+          arduino-cli core install esp32:esp32@3.3.4 --additional-urls "$ESP32_INDEX"
+          arduino-cli lib install "Adafruit SSD1306@2.5.15" "Adafruit GFX Library@1.12.4" "Adafruit BusIO@1.17.4"
+
+      - name: Compilar la versión de varios archivos (solo comprobación)
+        run: arduino-cli compile --fqbn "$FQBN" firmware/GolfDashboard
+
+      - name: Compilar la versión publicada
+        run: arduino-cli compile --fqbn "$FQBN" --output-dir out firmware/GolfDashboardWiFi
+
+      - name: Verificar y preparar la imagen completa
+        run: |
+          python3 -I firmware/tools/verificar-imagen.py out/GolfDashboardWiFi.ino.merged.bin
+          D=firmware/downloads
+          cp out/GolfDashboardWiFi.ino.merged.bin $D/GolfDashboard-ESP32-WROOM32-4MB.bin
+          (cd $D && sha256sum GolfDashboard-ESP32-WROOM32-4MB.bin > GolfDashboard-ESP32-WROOM32-SHA256.txt)
+          cat > $D/GolfDashboard-ESP32-WROOM32-manifest.json <<JSON
+          {
+            "board": "ESP32-WROOM-32 (ESP32 original, chip ID 0)",
+            "flash_bytes": 4194304,
+            "flash_mode": "DIO",
+            "flash_frequency_MHz": 40,
+            "write_address": "0x0",
+            "source": "firmware/GolfDashboardWiFi/GolfDashboardWiFi.ino",
+            "source_sha256": "$(sha256sum firmware/GolfDashboardWiFi/GolfDashboardWiFi.ino | cut -d' ' -f1)",
+            "merged_sha256": "$(cut -d' ' -f1 $D/GolfDashboard-ESP32-WROOM32-SHA256.txt)",
+            "core": "esp32:esp32@3.3.4",
+            "libraries": ["Adafruit SSD1306 2.5.15", "Adafruit GFX Library 1.12.4", "Adafruit BusIO 1.17.4"],
+            "commit": "$GITHUB_SHA",
+            "hardware_tested": false
+          }
+          JSON
+          cat $D/GolfDashboard-ESP32-WROOM32-SHA256.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Armar el cargador web
+        working-directory: firmware-cargador
+        run: |
+          npm install --no-audit --no-fund
+          npx tsc -p .
+          node probar-md5.mjs
+          npm run armar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GolfDashboard-ESP32
+          path: |
+            firmware/downloads/GolfDashboard-ESP32-WROOM32-*
+            firmware-cargador/Cargar-GolfDashboard-ESP32.html
+          if-no-files-found: error
+
+      - name: Guardar imagen y cargador en la rama de trabajo
+        if: github.event_name == 'push' && github.ref == 'refs/heads/claude/cloud-environment-setup-ifq167'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add firmware/downloads/GolfDashboard-ESP32-WROOM32-* firmware-cargador/Cargar-GolfDashboard-ESP32.html
+          if git diff --cached --quiet; then echo "Sin cambios"; exit 0; fi
+          git commit -m "Compilar firmware ESP32 y cargador web (automático, $GITHUB_SHA)"
+          git push

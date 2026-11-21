@@ -297,7 +297,23 @@ bool initializeElm() {
   return true;
 }
 
+// La busqueda Bluetooth clasica ocupa la misma radio que el Wi-Fi. Repetida
+// sin pausa, el telefono no logra unirse a GolfDashboard y no se puede corregir
+// el nombre o PIN del ELM desde el panel. Tras dos intentos fallidos se espacia:
+// 15 s sin telefonos conectados, 30 s con alguno conectado al punto de acceso.
+uint32_t bluetoothRetryDelay(unsigned failures) {
+  if (failures < 2) return 3000;
+  return WiFi.softAPgetStationNum() > 0 ? 30000 : 15000;
+}
+
+// Espera, pero corta en cuanto se guarda una configuracion nueva desde el panel.
+void waitOrReconfigure(uint32_t ms) {
+  const uint32_t start = millis();
+  while (uint32_t(millis() - start) < ms && !reconnectRequested.load()) vTaskDelay(pdMS_TO_TICKS(100));
+}
+
 void obdTask(void*) {
+  unsigned btFailures = 0;
   for (;;) {
     reconnectRequested.exchange(false);
     linkState(Link::Connecting, true);
@@ -309,7 +325,15 @@ void obdTask(void*) {
     if (wanted.mac[0] && parseMac(wanted.mac,address)) {
       connected = elm.connect(address);
     } else connected = elm.connect(String(wanted.name));
-    if (!connected) { vTaskDelay(pdMS_TO_TICKS(2000)); continue; }
+    if (!connected) {
+      ++btFailures;
+      const uint32_t wait = bluetoothRetryDelay(btFailures);
+      Serial.printf("ELM no encontrado; nueva busqueda en %lu s.\n", (unsigned long)(wait / 1000));
+      waitOrReconfigure(wait);
+      if (reconnectRequested.load()) btFailures = 0;
+      continue;
+    }
+    btFailures = 0;
     linkState(Link::Initializing);
     if (!initializeElm()) {
       Serial.printf("No se pudo iniciar OBD. Ultima respuesta: %s\n", response);
