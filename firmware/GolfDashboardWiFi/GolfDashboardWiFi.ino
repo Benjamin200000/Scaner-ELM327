@@ -764,12 +764,15 @@ bool initializeElm() {
 // La busqueda Bluetooth clasica ocupa la misma radio que el Wi-Fi. Repetida
 // sin pausa, el telefono no logra unirse a GolfDashboard y no se puede corregir
 // el nombre o PIN del ELM desde el panel. Cada busqueda por nombre dura hasta
-// 32 s en este core. Tras dos intentos fallidos se espacia: 15 s sin
-// telefonos conectados y 2 min con alguno conectado, para que el panel cargue
-// y se pueda corregir el nombre. Guardar ajustes corta la espera.
+// 32 s en este core, y mientras dura el telefono puede no completar la
+// verificacion de la clave Wi-Fi (el iPhone lo informa como "contrasena
+// incorrecta"). Si el ELM no aparece en dos busquedas, lo normal es que falte
+// configurar su nombre: se deja de buscar 5 min para poder unirse y
+// corregirlo. Guardar ajustes en el panel corta la espera y busca de inmediato.
+// Con el ELM bien configurado se encuentra en la primera busqueda.
 uint32_t bluetoothRetryDelay(unsigned failures) {
   if (failures < 2) return 3000;
-  return WiFi.softAPgetStationNum() > 0 ? 120000 : 15000;
+  return 300000;
 }
 
 // Espera, pero corta en cuanto se guarda una configuracion nueva desde el panel.
@@ -800,7 +803,7 @@ void obdTask() {
     if (!connected) {
       ++btFailures;
       const uint32_t wait = bluetoothRetryDelay(btFailures);
-      Serial.printf("ELM no encontrado; nueva busqueda en %lu s.\n", (unsigned long)(wait / 1000));
+      Serial.printf("ELM no encontrado; nueva busqueda en %lu s (guardar el nombre en el panel busca ya).\n", (unsigned long)(wait / 1000));
       waitOrReconfigure(wait);
       if (reconnectRequested.load()) btFailures = 0;
       continue;
