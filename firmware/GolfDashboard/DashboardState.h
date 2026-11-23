@@ -6,7 +6,7 @@ enum class Support : uint8_t { Unknown, Yes, No };
 enum class Link : uint8_t { Connecting, Initializing, Ready, Recovering };
 enum class Reply { Complete, Timeout, Disconnected, Overflow };
 struct AdapterSettings {
-  char name[64] = "ELM 327";
+  char name[64] = "OBDII";
   char pin[17] = "1234";
   char mac[18] = "";
 };

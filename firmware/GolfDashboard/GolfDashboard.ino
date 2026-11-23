@@ -4,6 +4,7 @@
  */
 #include <Arduino.h>
 #include <BluetoothSerial.h>
+#include <BLEDevice.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -20,12 +21,18 @@
 #include "DashboardState.h"
 #include "PollPlanner.h"
 #include "WebUi.h"
+#include "BleLink.h"
 
 #if !defined(CONFIG_BT_SPP_ENABLED)
 #error "Seleccione ESP32 original con Bluetooth SPP (ESP32 Dev Module), no S3/C3."
 #endif
 
 BluetoothSerial elm;
+BleElm ble;
+// Tipo de Bluetooth del ELM327: LE (compatibles con iPhone) o clasico.
+bool useBle = true;
+// Nombres vistos en la ultima busqueda BLE, para mostrarlos en la pagina.
+char foundNames[160] = "";
 Adafruit_SSD1306 oled(128, 64, &Wire, -1, OLED_I2C_HZ, OLED_I2C_HZ);
 constexpr uint8_t PIDS[] = {0x0C, 0x0D, 0x05, 0x5C, 0x10, 0x00, 0x0F, 0x0B, 0x04, 0x11, 0x42};
 Dashboard shared;
@@ -43,6 +50,7 @@ std::atomic<uint32_t> searchHoldUntil{0};
 std::atomic<bool> bluetoothActive{false};
 std::atomic<bool> bluetoothRequested{false};
 std::atomic<bool> wifiOffRequested{false};
+std::atomic<bool> restartRequested{false};
 bool wifiOn = false;
 String webToken;
 std::atomic<bool> reconnectRequested{false};
@@ -117,6 +125,10 @@ void sendLive(AsyncWebServerRequest* request) {
   String out; out.reserve(2400);
   out = "{\"state\":" + jsonText(states[static_cast<unsigned>(d.link)]);
   out += ",\"bt\":"; out += bluetoothActive.load() ? "true" : "false";
+  out += ",\"ble\":"; out += useBle ? "true" : "false";
+  char found[sizeof(foundNames)];
+  portENTER_CRITICAL(&guard); memcpy(found, foundNames, sizeof(found)); portEXIT_CRITICAL(&guard);
+  out += ",\"found\":" + jsonText(found);
   out += ",\"page\":"+String(d.page)+",\"mask\":"+String(d.extraMask);
   out += ",\"rpmHz\":"+String(d.rpmHz,2)+",\"speedHz\":"+String(d.speedHz,2);
   const float reference = afrReference(d);
@@ -175,7 +187,7 @@ void logHeap(const char* where) {
 // Si el ELM aun no esta conectado, corta la busqueda Bluetooth en curso y la
 // pausa hasta 2 min (o hasta guardar ajustes): comparte radio con el Wi-Fi.
 void freeRadioForWeb() {
-  if (!bluetoothActive.load() || snapshot().link != Link::Connecting) return;
+  if (!bluetoothActive.load() || useBle || snapshot().link != Link::Connecting) return;
   searchHoldUntil.store(millis() + 120000);
   esp_bt_gap_cancel_discovery();
 }
@@ -240,7 +252,7 @@ void configureNetwork() {
   web.on("/api/config",HTTP_GET,[](AsyncWebServerRequest* request) {
     AdapterSettings a = adapterSnapshot();
     AsyncWebServerResponse* response = request->beginResponse(200,"application/json",
-      "{\"name\":"+jsonText(a.name)+",\"mac\":"+jsonText(a.mac)+"}");
+      "{\"name\":"+jsonText(a.name)+",\"mac\":"+jsonText(a.mac)+",\"ble\":"+(preferences.getBool("ble", true) ? "true" : "false")+"}");
     response->addHeader("Cache-Control","no-store"); request->send(response);
   });
   web.on("/api/page",HTTP_POST,[](AsyncWebServerRequest* request) {
@@ -263,6 +275,7 @@ void configureNetwork() {
     if (!allowWebWrite(request)) return;
     AdapterSettings next = adapterSnapshot();
     String name=postArg(request,"name"), pin=postArg(request,"pin"), mac=postArg(request,"mac"); name.trim(); mac.trim();
+    if (!name.length()) name = next.name;  // vacio: conservar el actual (BLE puede buscar sin nombre)
     bool valid=name.length()>0 && name.length()<sizeof(next.name) && pin.length()<sizeof(next.pin);
     for (unsigned i=0; i<name.length(); ++i) if (name[i]<32 || uint8_t(name[i])>126) valid=false;
     for (unsigned i=0; i<pin.length(); ++i) if (pin[i]<32 || uint8_t(pin[i])>126) valid=false;
@@ -275,6 +288,16 @@ void configureNetwork() {
       request->send(500,"text/plain","No se pudo guardar en memoria. Revisa por USB."); return;
     }
     portENTER_CRITICAL(&guard); adapter=next; portEXIT_CRITICAL(&guard);
+    const String type = postArg(request,"ble");
+    if (type == "1" || type == "0") {
+      const bool wantBle = type == "1";
+      preferences.putBool("ble", wantBle);
+      if (bluetoothActive.load() && wantBle != useBle) {
+        restartRequested.store(true);
+        request->send(200,"text/plain; charset=utf-8","Guardado. Reiniciando para cambiar el tipo de Bluetooth.");
+        return;
+      }
+    }
     reconnectRequested.store(true);
     request->send(200,"text/plain; charset=utf-8","Guardado. Reconectando Bluetooth; puede tardar varias decenas de segundos.");
   });
@@ -303,22 +326,27 @@ char response[768];
 
 // Una sola consulta en vuelo. Si falta '>', se reinicia la conexion para no
 // atribuir una respuesta tardia al comando siguiente. Solo bloquea la tarea OBD.
+int linkAvailable() { return useBle ? ble.available() : elm.available(); }
+int linkRead() { return useBle ? ble.read() : elm.read(); }
+size_t linkWrite(const uint8_t* data, size_t length) { return useBle ? ble.write(data, length) : elm.write(data, length); }
+bool linkConnected() { return useBle ? ble.connected() : elm.connected(0); }
+void linkDisconnect() { if (useBle) ble.disconnect(); else elm.disconnect(); }
 Reply command(const char* text, uint32_t timeout) {
   if (reconnectRequested.load()) return Reply::Disconnected;
-  while (elm.available()) elm.read();
+  while (linkAvailable()) linkRead();
   response[0] = 0;
   char outbound[32];
   const int length = snprintf(outbound, sizeof(outbound), "%s\r", text);
   if (length < 0 || size_t(length) >= sizeof(outbound)) return Reply::Overflow;
   // Comando y terminador en una escritura para evitar dos envios SPP separados.
-  if (elm.write(reinterpret_cast<const uint8_t*>(outbound), length) != size_t(length))
+  if (linkWrite(reinterpret_cast<const uint8_t*>(outbound), length) != size_t(length))
     return Reply::Disconnected;
   const uint32_t start = millis();
   size_t used = 0;
   bool overflow = false;
   while (uint32_t(millis() - start) < timeout) {
-    while (elm.available()) {
-      int ch = elm.read();
+    while (linkAvailable()) {
+      int ch = linkRead();
       if (ch < 0) break;
       if (ch == '>') {
         response[used] = 0;
@@ -327,7 +355,7 @@ Reply command(const char* text, uint32_t timeout) {
       if (used + 1 < sizeof(response)) response[used++] = static_cast<char>(ch);
       else overflow = true;
     }
-    if (!elm.connected(0) || reconnectRequested.load()) return Reply::Disconnected;
+    if (!linkConnected() || reconnectRequested.load()) return Reply::Disconnected;
     vTaskDelay(1); // Cede CPU al stack BT; no hay espera fija tras una respuesta.
   }
   response[used] = 0;
@@ -441,19 +469,23 @@ uint32_t bluetoothRetryDelay(unsigned failures) {
 // Tras conectar por nombre (que escanea), guarda la MAC del adaptador: las
 // conexiones siguientes van directo por direccion, sin escanear, y la radio
 // queda libre para el Wi-Fi. Se puede borrar o cambiar desde el panel.
+void saveLearnedMac(const AdapterSettings& wanted, const String& mac) {
+  uint8_t parsed[6];
+  if (mac.length() != 17 || !parseMac(mac.c_str(), parsed)) return;
+  AdapterSettings next = adapterSnapshot();
+  if (strcmp(next.name, wanted.name) != 0 || next.mac[0]) return;  // cambiaron los ajustes
+  strlcpy(next.mac, mac.c_str(), sizeof(next.mac));
+  if (preferences.putBytes("adapter", &next, sizeof(next)) != sizeof(next)) return;
+  portENTER_CRITICAL(&guard); adapter = next; portEXIT_CRITICAL(&guard);
+  Serial.printf("ELM encontrado: MAC %s guardada; las proximas conexiones van directo.\n", mac.c_str());
+}
 void learnAdapterAddress(const AdapterSettings& wanted) {
   BTScanResults* results = elm.getScanResults();
   if (!results) return;
   for (int i = 0; i < results->getCount(); ++i) {
     BTAdvertisedDevice* device = results->getDevice(i);
     if (!device || !device->haveName() || device->getName() != std::string(wanted.name)) continue;
-    const String mac = device->getAddress().toString(true);
-    AdapterSettings next = adapterSnapshot();
-    if (strcmp(next.name, wanted.name) != 0 || next.mac[0]) return;  // cambiaron los ajustes
-    strlcpy(next.mac, mac.c_str(), sizeof(next.mac));
-    if (preferences.putBytes("adapter", &next, sizeof(next)) != sizeof(next)) return;
-    portENTER_CRITICAL(&guard); adapter = next; portEXIT_CRITICAL(&guard);
-    Serial.printf("ELM %s encontrado: MAC %s guardada; no se volvera a escanear.\n", wanted.name, mac.c_str());
+    saveLearnedMac(wanted, device->getAddress().toString(true));
     return;
   }
   Serial.println("ELM conectado por nombre; su MAC no aparecio en la busqueda (se seguira usando el nombre).");
@@ -477,13 +509,19 @@ void obdTask(void*) {
       reconnectRequested.store(false);
     }
     AdapterSettings wanted = adapterSnapshot();
-    elm.setPin(wanted.pin, strlen(wanted.pin));
-    Serial.printf("Conectando a %s; contacto del Golf encendido.\n", wanted.name);
+    Serial.printf("Conectando a %s por Bluetooth %s; contacto encendido.\n", wanted.name, useBle ? "LE" : "clasico");
     bool connected;
-    uint8_t address[6];
-    if (wanted.mac[0] && parseMac(wanted.mac,address)) {
-      connected = elm.connect(address);
-    } else connected = elm.connect(String(wanted.name));
+    if (useBle) {
+      connected = ble.connect(wanted.name, wanted.mac);
+      portENTER_CRITICAL(&guard); strlcpy(foundNames, ble.found(), sizeof(foundNames)); ++shared.revision; portEXIT_CRITICAL(&guard);
+      Serial.printf("BLE cerca: %s\n", ble.found()[0] ? ble.found() : "(ninguno con nombre)");
+      if (connected) Serial.printf("ELM BLE conectado: %s (%s).\n", ble.connectedName().c_str(), ble.address().c_str());
+    } else {
+      elm.setPin(wanted.pin, strlen(wanted.pin));
+      uint8_t address[6];
+      if (wanted.mac[0] && parseMac(wanted.mac,address)) connected = elm.connect(address);
+      else connected = elm.connect(String(wanted.name));
+    }
     if (!connected) {
       ++btFailures;
       const uint32_t wait = bluetoothRetryDelay(btFailures);
@@ -493,12 +531,12 @@ void obdTask(void*) {
       continue;
     }
     btFailures = 0;
-    if (!wanted.mac[0]) learnAdapterAddress(wanted);
+    if (!wanted.mac[0]) { if (useBle) saveLearnedMac(wanted, ble.address()); else learnAdapterAddress(wanted); }
     linkState(Link::Initializing);
     if (!initializeElm()) {
       Serial.printf("No se pudo iniciar OBD. Ultima respuesta: %s\n", response);
       linkState(Link::Recovering);
-      elm.disconnect();
+      linkDisconnect();
       vTaskDelay(pdMS_TO_TICKS(2000));
       continue;
     }
@@ -509,7 +547,7 @@ void obdTask(void*) {
     uint32_t statsAt = millis();
     uint32_t counts[FIELD_COUNT] = {};
     unsigned failures = 0;
-    while (elm.connected(0) && !reconnectRequested.load()) {
+    while (linkConnected() && !reconnectRequested.load()) {
       const uint32_t now = millis();
       Dashboard d = snapshot();
       const FieldId id = planner.next(d, now);
@@ -556,7 +594,7 @@ void obdTask(void*) {
       }
     }
     linkState(Link::Recovering);
-    elm.disconnect();
+    linkDisconnect();
     vTaskDelay(pdMS_TO_TICKS(1500));
   }
 }
@@ -622,18 +660,23 @@ void render(const Dashboard& d) {
 
 void startBluetooth() {
   if (bluetoothActive.load()) return;
-  if (!elm.begin("GolfDashboard", true)) {
-    Serial.println("No se pudo iniciar Bluetooth SPP.");
-    return;
-  }
+  useBle = preferences.getBool("ble", true);
   const AdapterSettings a = adapterSnapshot();
-  elm.setPin(a.pin, strlen(a.pin));
+  if (useBle) {
+    ble.begin("GolfDashboard");
+  } else {
+    if (!elm.begin("GolfDashboard", true)) {
+      Serial.println("No se pudo iniciar Bluetooth SPP.");
+      return;
+    }
+    elm.setPin(a.pin, strlen(a.pin));
+  }
   bluetoothActive.store(true);
   portENTER_CRITICAL(&guard); ++shared.revision; portEXIT_CRITICAL(&guard);
   if (xTaskCreatePinnedToCore(obdTask, "OBD", 8192, nullptr, 2, nullptr, 0) != pdPASS) {
     Serial.println("No se pudo crear tarea OBD.");
   }
-  Serial.printf("Bluetooth encendido: buscando el ELM327 %s.\n", a.name);
+  Serial.printf("Bluetooth %s encendido: buscando el ELM327 %s.\n", useBle ? "LE" : "clasico", a.name);
 }
 void stopWifi() {
   web.end();
@@ -686,6 +729,7 @@ void loop() {
   // Mantener BOOT 3 s con el programa funcionando: volver al modo configuracion.
   if (stable == LOW && pressedAt && uint32_t(now - pressedAt) >= 3000) { pressedAt = 0; enterSetupMode(); }
   // "Conectar" desde la pagina: se atiende aqui, fuera del servidor web.
+  if (restartRequested.load()) { delay(1500); ESP.restart(); }
   if (bluetoothRequested.exchange(false)) {
     if (wifiOffRequested.load()) {
       preferences.putBool("soloPantalla", true);

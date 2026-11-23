@@ -84,6 +84,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     assert.deepEqual(posts.map(p => p.path), ['/api/config', '/api/connect']);
     assert.equal(posts[0].data.get('name'), 'OBDII');
     assert.equal(posts[1].data.get('soloPantalla'), '1');
+    assert.equal(posts[0].data.get('ble'), '1');  // BLE por defecto
+    // Adaptadores BLE vistos cerca: se muestran para elegir el nombre.
+    data.found = 'OBDII, SLEVE EVO';
+    await page.waitForFunction(() => document.querySelector('#found').textContent.includes('OBDII, SLEVE EVO'));
     data.bt = true;
     // Diesel informado por la ECU (PID 51): la referencia del AFR cambia y se indica.
     data.fuel = 'diesel'; data.reference = 14.5;

@@ -1,7 +1,7 @@
 #pragma once
 
 // ESP32-WROOM-32 (ESP32 original; requiere Bluetooth clasico SPP).
-constexpr char ELM_NAME[] = "ELM 327";
+constexpr char ELM_NAME[] = "OBDII";
 // Si el nombre no conecta, escribir la MAC del adaptador y activar esta opcion.
 constexpr bool USE_ELM_MAC = false;
 constexpr uint8_t ELM_MAC[6] = {0, 0, 0, 0, 0, 0};

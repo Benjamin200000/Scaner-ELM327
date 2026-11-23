@@ -1,6 +1,6 @@
 # Tablero Golf MK4/A4 con ESP32 y ELM327
 
-Firmware v3 de lectura para ESP32-WROOM-32 de 38 pines, OLED SSD1306 128×64 I2C y ELM327 Bluetooth clasico SPP. Incluye dos paginas en la misma OLED. Crea una red Wi-Fi local para el movil, no modifica mapas y no borra averias.
+Firmware de lectura para ESP32-WROOM-32 de 38 pines, OLED SSD1306 128×64 I2C y ELM327 Bluetooth LE o clasico (SPP). Incluye dos paginas en la misma OLED. Crea una red Wi-Fi local para el movil, no modifica mapas y no borra averias.
 
 La compatibilidad fisica con el Golf, el adaptador y la disponibilidad de aceite requieren una prueba real. No hay hardware conectado en el entorno de compilacion. Un ELM327 BLE o Wi-Fi no sirve para este firmware.
 
@@ -39,6 +39,12 @@ Se entrega tambien **GolfDashboardWiFi.ino**, un archivo unico que contiene los 
 ### Editar el panel web
 
 El panel esta en `web/panel.html`. Despues de editarlo, correr `python3 -I tools/generar-panel.py`: lo comprime (gzip) y lo incrusta en `GolfDashboard/WebUi.h` y en `GolfDashboardWiFi.ino`. Se sirve comprimido directo desde la flash (unos 3 KB en vez de 6,7 KB, sin copiarlo a la RAM). El workflow comprueba que lo incrustado coincida con `panel.html`. Abrir el panel corta una busqueda Bluetooth en curso si el ELM no esta conectado, para que la pagina llegue completa.
+
+### Bluetooth LE (adaptadores compatibles con iPhone)
+
+- El firmware habla con ELM327 **Bluetooth LE** (los que funcionan con apps de iPhone: Vgate, Veepeak, LELink, clones "OBDII") y con los de **Bluetooth clasico** (SPP, solo Android). Se elige en la pagina; por defecto LE.
+- El nombre por defecto es **OBDII**. En LE se busca por MAC, por nombre (sin distinguir mayusculas) o, si ninguno coincide, el adaptador mas cercano que anuncie un servicio ELM327 conocido (FFF0, FFE0, LELink, Nordic UART, 18F0). La pagina muestra los nombres BLE encontrados cerca.
+- El identificador largo que muestra el iPhone para un dispositivo BLE no es su MAC; no copiarlo en el campo MAC. Tras la primera conexion, la MAC real se guarda sola.
 
 ### Modo configuracion y modo pantalla
 
