@@ -1,6 +1,6 @@
 # Validacion v3: OLED y Wi-Fi local
 
-- Core Arduino-ESP32 3.3.4, ESP32 Dev Module, CPU 240 MHz, flash 4 MB, particion Huge APP.
+- Core Arduino-ESP32 3.3.4, ESP32 Dev Module, CPU 240 MHz, flash 4 MB, particion Minimal SPIFFS (1.9MB APP with OTA).
 - Adafruit SSD1306 2.5.15, Adafruit GFX 1.12.4 y BusIO 1.17.4. WiFi, WebServer y Preferences vienen con el core.
 - Archivo unico compilado: 1.697.255 bytes de programa (53 % de particion) y 64.300 bytes de variables globales (19 % de la region RAM indicada). Esto no mide RAM libre durante ejecucion.
 - Pruebas C++ con AddressSanitizer/UndefinedBehaviorSanitizer correctas: PIDs base, MAF, lambda medida, rechazo de lambda solicitada, temperatura de admision, MAP bar absolutos, carga, acelerador, tension, prioridad de consulta, extras opcionales y desbordamiento del reloj.

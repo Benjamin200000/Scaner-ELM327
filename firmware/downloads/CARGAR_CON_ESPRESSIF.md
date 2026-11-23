@@ -31,6 +31,6 @@ Con el movil, conectarse a **GolfDashboard**, clave inicial **GolfOBD2026**, y a
 
 Una pulsacion corta BOOT con el programa ya ejecutandose alterna las dos paginas OLED. No mantener BOOT al encender, excepto para entrar al modo de carga.
 
-Fuentes de esta compilacion: `firmware/GolfDashboardWiFi/GolfDashboardWiFi.ino`. Core ESP32 3.3.4, Huge APP, CPU 240 MHz, flash 4 MB, DIO y 40 MHz. Bibliotecas Adafruit y sus versiones en README.md. Avisos de componentes en `licenses/`; fuentes Arduino-ESP32: https://github.com/espressif/arduino-esp32/tree/3.3.4 y ESP-IDF: https://github.com/espressif/esp-idf/tree/v5.5
+Fuentes de esta compilacion: `firmware/GolfDashboardWiFi/GolfDashboardWiFi.ino`. Core ESP32 3.3.4, Minimal SPIFFS (OTA), CPU 240 MHz, flash 4 MB, DIO y 40 MHz. Bibliotecas Adafruit y sus versiones en README.md. Avisos de componentes en `licenses/`; fuentes Arduino-ESP32: https://github.com/espressif/arduino-esp32/tree/3.3.4 y ESP-IDF: https://github.com/espressif/esp-idf/tree/v5.5
 
-Comprobaciones: compilacion correcta; checksums y hashes de bootloader/aplicacion validados con esptool; componentes encontrados en sus offsets de la imagen combinada; identidad ESP32, DIO/40 MHz y tabla Huge APP comprobadas. Pendiente validar en hardware real.
+Comprobaciones: compilacion correcta; checksums y hashes de bootloader/aplicacion validados con esptool; componentes encontrados en sus offsets de la imagen combinada; identidad ESP32, DIO/40 MHz y tabla Minimal SPIFFS con dos particiones de programa comprobadas. Pendiente validar en hardware real.

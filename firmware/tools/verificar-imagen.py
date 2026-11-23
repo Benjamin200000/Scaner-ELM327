@@ -31,8 +31,12 @@ while b[off:off + 2] == b'\xaa\x50':
     o, sz = struct.unpack('<II', b[off + 4:off + 12])
     particiones[b[off + 12:off + 28].rstrip(b'\0').decode()] = (o, sz)
     off += 32
-if particiones.get('app0') != (0x10000, 0x300000):
+# Dos particiones de programa de 1,9 MB (min_spiffs): permite actualizar
+# el firmware desde la pagina del ESP32.
+if particiones.get('app0') != (0x10000, 0x1E0000):
     fallas.append(f'partición app0 inesperada: {particiones.get("app0")}')
+if particiones.get('app1') != (0x1F0000, 0x1E0000):
+    fallas.append(f'falta la segunda partición de programa (app1): {particiones.get("app1")}')
 if 'nvs' not in particiones:
     fallas.append('falta la partición nvs')
 print('particiones:', ', '.join(f'{k}@0x{v[0]:X}' for k, v in particiones.items()))

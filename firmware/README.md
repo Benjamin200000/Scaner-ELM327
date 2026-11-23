@@ -53,6 +53,12 @@ El panel esta en `web/panel.html`. Despues de editarlo, correr `python3 -I tools
 - Con **Apagar el Wi-Fi al conectar** marcado, el Wi-Fi se apaga y queda solo la pantalla; ese modo se recuerda y en los proximos encendidos va directo al ELM sin Wi-Fi.
 - Para volver a configurar: con el programa funcionando, **mantener BOOT 3 segundos**. Una pulsacion corta sigue cambiando la pagina de la OLED.
 
+### Actualizar el firmware desde la pagina
+
+- En la pagina, seccion **Actualizar firmware**: elegir `GolfDashboard-actualizacion.bin` (de `firmware/downloads/`) y pulsar el boton. La placa lo escribe en la otra particion de programa, verifica que llego completo y se reinicia con la version nueva; si algo falla, sigue con la actual.
+- No usar la imagen completa de 4 MB: esa es para el cargador por USB (la pagina la rechaza).
+- Requiere la tabla de particiones Minimal SPIFFS (dos programas de 1,9 MB). La primera vez con esta tabla hay que cargar por USB.
+
 ### Diagnostico
 
 - Al arrancar, el Monitor serie (o "Ver mensajes de la placa" en el cargador web) indica el motivo: encendido, boton EN, CUELGUE o FALTA DE ENERGIA (brownout).
@@ -107,7 +113,7 @@ Alimentar el ESP32 por USB desde el PC o desde un cargador USB de automovil regu
 3. En Gestor de placas, instalar **esp32 by Espressif Systems, version 3.3.4**. El codigo usa la API `BluetoothSerial.setPin(pin, longitud)` de esa version; no se ha comprobado con el core 2.x.
 4. En el Gestor de bibliotecas, instalar **Adafruit SSD1306 2.5.15**, **Adafruit GFX Library 1.12.4** y su dependencia **Adafruit BusIO 1.17.4**, y ademas **ESP Async WebServer 3.12.1** y **Async TCP 3.5.0** (ambas de ESP32Async). Aceptar la instalacion de dependencias.
 5. Descomprimir el paquete y abrir **GolfDashboard/GolfDashboard.ino**. Mantener juntos los archivos `.ino` y `.h` de esa carpeta.
-6. En Herramientas, seleccionar **ESP32 Dev Module**, CPU **240 MHz**, Flash **4 MB**, Partition Scheme **Huge APP (3MB No OTA/1MB SPIFFS)** y Upload Speed **460800**. Seleccionar el puerto COM de la placa.
+6. En Herramientas, seleccionar **ESP32 Dev Module**, CPU **240 MHz**, Flash **4 MB**, Partition Scheme **Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)** y Upload Speed **460800**. Seleccionar el puerto COM de la placa.
 7. Conectar un cable USB de datos y pulsar **Verificar** y despues **Subir**. Si queda en `Connecting...`, mantener BOOT pulsado hasta que empiece la escritura y soltarlo. Si falla la carga, bajar Upload Speed a **115200**. La velocidad de carga USB no determina la velocidad OBD.
 8. Abrir Monitor serie a **115200 baudios**. Si no aparece puerto COM, revisar cable y controlador CP2102 oficial: https://www.silabs.com/developer-tools/usb-to-uart-bridge-vcp-drivers
 9. Conectar el ELM al Golf, poner contacto y dejarlo encendido. Desconectar el telefono del ELM para que no ocupe su unica conexion. El ESP32 intentara conectarse y detectar automaticamente el protocolo de la ECU. La primera deteccion puede tardar decenas de segundos.
@@ -157,7 +163,7 @@ g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined firmware/tests
 Compilacion Arduino CLI equivalente al IDE:
 
 ```sh
-arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app,FlashSize=4M,CPUFreq=240 firmware/GolfDashboard
+arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs,FlashSize=4M,CPUFreq=240,FlashMode=dio,FlashFreq=40 firmware/GolfDashboard
 ```
 
 La compilacion y las pruebas de analisis no demuestran funcionamiento fisico de Bluetooth, pantalla o parametros del Golf. No se ha probado contra la ECU real. No se ha publicado ni enviado el codigo a servicios externos.

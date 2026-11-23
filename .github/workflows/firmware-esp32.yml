@@ -22,7 +22,7 @@ permissions:
 
 env:
   ESP32_INDEX: https://espressif.github.io/arduino-esp32/package_esp32_index.json
-  FQBN: esp32:esp32:esp32:PartitionScheme=huge_app,FlashSize=4M,CPUFreq=240,FlashMode=dio,FlashFreq=40
+  FQBN: esp32:esp32:esp32:PartitionScheme=min_spiffs,FlashSize=4M,CPUFreq=240,FlashMode=dio,FlashFreq=40
 
 jobs:
   firmware:
@@ -82,6 +82,9 @@ jobs:
           python3 -I firmware/tools/verificar-imagen.py out/GolfDashboardWiFi.ino.merged.bin
           D=firmware/downloads
           cp out/GolfDashboardWiFi.ino.merged.bin $D/GolfDashboard-ESP32-WROOM32-4MB.bin
+          # Solo el programa: para "Actualizar firmware" desde la pagina del ESP32.
+          cp out/GolfDashboardWiFi.ino.bin $D/GolfDashboard-actualizacion.bin
+          (cd $D && sha256sum GolfDashboard-actualizacion.bin > GolfDashboard-actualizacion-SHA256.txt)
           (cd $D && sha256sum GolfDashboard-ESP32-WROOM32-4MB.bin > GolfDashboard-ESP32-WROOM32-SHA256.txt)
           cat > $D/GolfDashboard-ESP32-WROOM32-manifest.json <<JSON
           {
@@ -116,6 +119,7 @@ jobs:
           name: GolfDashboard-ESP32
           path: |
             firmware/downloads/GolfDashboard-ESP32-WROOM32-*
+            firmware/downloads/GolfDashboard-actualizacion*
             firmware-cargador/Cargar-GolfDashboard-ESP32.html
           if-no-files-found: error
 
@@ -124,7 +128,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add firmware/downloads/GolfDashboard-ESP32-WROOM32-* firmware-cargador/Cargar-GolfDashboard-ESP32.html
+          git add firmware/downloads/GolfDashboard-ESP32-WROOM32-* firmware/downloads/GolfDashboard-actualizacion* firmware-cargador/Cargar-GolfDashboard-ESP32.html
           if git diff --cached --quiet; then echo "Sin cambios"; exit 0; fi
           git commit -m "Compilar firmware ESP32 y cargador web (automático, $GITHUB_SHA)"
           git push
