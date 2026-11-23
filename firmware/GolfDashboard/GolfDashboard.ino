@@ -37,6 +37,13 @@ Preferences preferences;
 AsyncWebServer web{80};
 // Hasta cuando no buscar el ELM porque un telefono acaba de unirse al Wi-Fi.
 std::atomic<uint32_t> searchHoldUntil{0};
+// Dos modos. Configuracion: solo Wi-Fi y la pagina, Bluetooth apagado del todo.
+// Pantalla: Bluetooth al ELM327 y, si se eligio, sin Wi-Fi. El Bluetooth se
+// enciende recien al pulsar "Conectar" en la pagina.
+std::atomic<bool> bluetoothActive{false};
+std::atomic<bool> bluetoothRequested{false};
+std::atomic<bool> wifiOffRequested{false};
+bool wifiOn = false;
 String webToken;
 std::atomic<bool> reconnectRequested{false};
 portMUX_TYPE guard = portMUX_INITIALIZER_UNLOCKED;
@@ -109,6 +116,7 @@ void sendLive(AsyncWebServerRequest* request) {
   const char* states[] = {"Conectando Bluetooth", "Detectando ECU", "OBD conectado", "Reconectando OBD"};
   String out; out.reserve(2400);
   out = "{\"state\":" + jsonText(states[static_cast<unsigned>(d.link)]);
+  out += ",\"bt\":"; out += bluetoothActive.load() ? "true" : "false";
   out += ",\"page\":"+String(d.page)+",\"mask\":"+String(d.extraMask);
   out += ",\"rpmHz\":"+String(d.rpmHz,2)+",\"speedHz\":"+String(d.speedHz,2);
   const float reference = afrReference(d);
@@ -167,7 +175,7 @@ void logHeap(const char* where) {
 // Si el ELM aun no esta conectado, corta la busqueda Bluetooth en curso y la
 // pausa hasta 2 min (o hasta guardar ajustes): comparte radio con el Wi-Fi.
 void freeRadioForWeb() {
-  if (snapshot().link != Link::Connecting) return;
+  if (!bluetoothActive.load() || snapshot().link != Link::Connecting) return;
   searchHoldUntil.store(millis() + 120000);
   esp_bt_gap_cancel_discovery();
 }
@@ -269,6 +277,15 @@ void configureNetwork() {
     portENTER_CRITICAL(&guard); adapter=next; portEXIT_CRITICAL(&guard);
     reconnectRequested.store(true);
     request->send(200,"text/plain; charset=utf-8","Guardado. Reconectando Bluetooth; puede tardar varias decenas de segundos.");
+  });
+  web.on("/api/connect",HTTP_POST,[](AsyncWebServerRequest* request) {
+    if (!allowWebWrite(request)) return;
+    const bool soloPantalla = postArg(request,"soloPantalla") == "1";
+    wifiOffRequested.store(soloPantalla);
+    bluetoothRequested.store(true);
+    request->send(200,"text/plain; charset=utf-8", soloPantalla
+      ? "Conectando al ELM327. El Wi-Fi se apaga en 2 s: desde ahora mira la pantalla. Para volver a configurar, mantener BOOT 3 s."
+      : "Bluetooth encendido: buscando el ELM327. La pagina sigue disponible.");
   });
   web.onNotFound([](AsyncWebServerRequest* request) {request->send(404,"text/plain","Abre http://192.168.4.1/");});
   web.begin();
@@ -556,14 +573,20 @@ void render(const Dashboard& d) {
   oled.clearDisplay();
   oled.setTextColor(SSD1306_WHITE);
   oled.setTextSize(1); oled.setCursor(0, 0);
-  if (d.link != Link::Ready) {
+  if (!bluetoothActive.load()) {
+    oled.println("MODO CONFIGURACION");
+    oled.setCursor(0, 14); oled.print("WiFi "); oled.println(WIFI_AP_NAME);
+    oled.setCursor(0, 26); oled.print("Clave "); oled.println(WIFI_AP_PASSWORD);
+    oled.setCursor(0, 38); oled.println("http://192.168.4.1");
+    oled.setCursor(0, 54); oled.println("Pagina: Conectar");
+  } else if (d.link != Link::Ready) {
     oled.println("GOLF MK4 / OBD");
     oled.setCursor(0, 20);
     if (d.link == Link::Connecting) oled.println("Conectando Bluetooth");
     else if (d.link == Link::Initializing) oled.println("Detectando ECU...");
     else oled.println("Sin conexion OBD");
     oled.setCursor(0, 40); oled.println("ELM 327 + contacto ON");
-    oled.setCursor(0, 56); oled.print("WiFi: 192.168.4.1");
+    oled.setCursor(0, 56); oled.print(wifiOn ? "WiFi: 192.168.4.1" : "BOOT 3s: configurar");
   } else if (d.page == 0) {
     oled.print("RPM"); oled.setCursor(54, 0); oled.print("1/2");
     oled.setCursor(90, 0); oled.print("km/h");
@@ -597,6 +620,35 @@ void render(const Dashboard& d) {
   oled.display();
 }
 
+void startBluetooth() {
+  if (bluetoothActive.load()) return;
+  if (!elm.begin("GolfDashboard", true)) {
+    Serial.println("No se pudo iniciar Bluetooth SPP.");
+    return;
+  }
+  const AdapterSettings a = adapterSnapshot();
+  elm.setPin(a.pin, strlen(a.pin));
+  bluetoothActive.store(true);
+  portENTER_CRITICAL(&guard); ++shared.revision; portEXIT_CRITICAL(&guard);
+  if (xTaskCreatePinnedToCore(obdTask, "OBD", 8192, nullptr, 2, nullptr, 0) != pdPASS) {
+    Serial.println("No se pudo crear tarea OBD.");
+  }
+  Serial.printf("Bluetooth encendido: buscando el ELM327 %s.\n", a.name);
+}
+void stopWifi() {
+  web.end();
+  MDNS.end();
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_OFF);
+  wifiOn = false;
+  Serial.println("Wi-Fi apagado: modo solo pantalla (mantener BOOT 3 s para volver a configurar).");
+}
+void enterSetupMode() {
+  preferences.putBool("soloPantalla", false);
+  Serial.println("BOOT 3 s: volviendo al modo configuracion.");
+  delay(200);
+  ESP.restart();
+}
 void setup() {
   Serial.begin(115200);
   Serial.printf("\nGolf Dashboard: arranque por %s.\n", resetReasonText());
@@ -606,14 +658,13 @@ void setup() {
   displayReady = oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS);
   if (!displayReady) Serial.println("OLED no iniciada: revisar 3V3, GND, SDA21, SCL22 y 0x3C/0x3D.");
   else render(snapshot());
-  configureNetwork();
-  if (!elm.begin("GolfDashboard", true)) {
-    Serial.println("No se pudo iniciar Bluetooth SPP.");
-    while (true) delay(1000);
-  }
-  elm.setPin(ELM_PIN, strlen(ELM_PIN));
-  if (xTaskCreatePinnedToCore(obdTask, "OBD", 8192, nullptr, 2, nullptr, 0) != pdPASS) {
-    Serial.println("No se pudo crear tarea OBD.");
+  if (preferences.getBool("soloPantalla", false)) {
+    Serial.println("Modo solo pantalla: directo al ELM327, sin Wi-Fi (mantener BOOT 3 s para configurar).");
+    startBluetooth();
+  } else {
+    configureNetwork();
+    wifiOn = true;
+    Serial.println("Modo configuracion: Bluetooth apagado. Wi-Fi GolfDashboard, abrir http://192.168.4.1/ y pulsar Conectar.");
   }
 }
 void loop() {
@@ -626,9 +677,22 @@ void loop() {
   if (uint32_t(now - lastHeapLog) >= 10000) { lastHeapLog = now; logHeap("estado"); }
   bool raw = digitalRead(PAGE_BUTTON_PIN);
   if (raw != lastRaw) { lastRaw = raw; buttonChangedAt = now; }
+  static uint32_t pressedAt = 0;
   if (raw != stable && uint32_t(now - buttonChangedAt) >= BUTTON_DEBOUNCE_MS) {
     stable = raw;
-    if (stable == LOW) changePage();
+    if (stable == LOW) pressedAt = now;
+    else if (pressedAt && uint32_t(now - pressedAt) < 1500) changePage();  // pulsacion corta
+  }
+  // Mantener BOOT 3 s con el programa funcionando: volver al modo configuracion.
+  if (stable == LOW && pressedAt && uint32_t(now - pressedAt) >= 3000) { pressedAt = 0; enterSetupMode(); }
+  // "Conectar" desde la pagina: se atiende aqui, fuera del servidor web.
+  if (bluetoothRequested.exchange(false)) {
+    if (wifiOffRequested.load()) {
+      preferences.putBool("soloPantalla", true);
+      delay(1500);  // deja salir la respuesta de la pagina antes de apagar el Wi-Fi
+      stopWifi();
+    }
+    startBluetooth();
   }
   // Alternativa sin boton, desde Monitor serie: enviar p.
   while (Serial.available()) {

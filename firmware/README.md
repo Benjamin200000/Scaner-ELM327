@@ -40,6 +40,13 @@ Se entrega tambien **GolfDashboardWiFi.ino**, un archivo unico que contiene los 
 
 El panel esta en `web/panel.html`. Despues de editarlo, correr `python3 -I tools/generar-panel.py`: lo comprime (gzip) y lo incrusta en `GolfDashboard/WebUi.h` y en `GolfDashboardWiFi.ino`. Se sirve comprimido directo desde la flash (unos 3 KB en vez de 6,7 KB, sin copiarlo a la RAM). El workflow comprueba que lo incrustado coincida con `panel.html`. Abrir el panel corta una busqueda Bluetooth en curso si el ELM no esta conectado, para que la pagina llegue completa.
 
+### Modo configuracion y modo pantalla
+
+- Al encender por primera vez (o tras mantener BOOT 3 s) arranca en **modo configuracion**: solo Wi-Fi GolfDashboard y la pagina, con el Bluetooth apagado del todo. La OLED muestra la red, la clave y la direccion.
+- En la pagina: escribir el nombre (y PIN o MAC) del ELM327 y pulsar **Conectar al ELM327**. Recien ahi se enciende el Bluetooth.
+- Con **Apagar el Wi-Fi al conectar** marcado, el Wi-Fi se apaga y queda solo la pantalla; ese modo se recuerda y en los proximos encendidos va directo al ELM sin Wi-Fi.
+- Para volver a configurar: con el programa funcionando, **mantener BOOT 3 segundos**. Una pulsacion corta sigue cambiando la pagina de la OLED.
+
 ### Diagnostico
 
 - Al arrancar, el Monitor serie (o "Ver mensajes de la placa" en el cargador web) indica el motivo: encendido, boton EN, CUELGUE o FALTA DE ENERGIA (brownout).
