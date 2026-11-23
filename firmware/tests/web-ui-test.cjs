@@ -53,11 +53,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await page.waitForFunction(() => document.querySelector('#msg').textContent.includes('cambiada'));
     assert.equal(posts.at(-1).path, '/api/page');
     assert.equal(posts.at(-1).data.get('page'), '1');
+    // Marcar una casilla la aplica sola, sin otro boton.
     await page.locator('#extras input[value="4"]').check();
-    await page.getByRole('button', { name: 'Aplicar selección' }).click();
-    await page.waitForFunction(() => document.querySelector('#msg').textContent.includes('aplicada'));
+    await page.waitForFunction(() => document.querySelector('#msg').textContent.includes('se consulta'));
     assert.equal(posts.at(-1).data.get('mask'), '16');
-    await page.getByRole('button', { name: 'Priorizar latencia' }).click();
+    // Cada casilla dice si el auto no informa el dato.
+    assert((await page.locator('#extras label').nth(5).textContent()).includes('este auto no lo informa'));
+    await page.getByRole('button', { name: 'Quitar todas (priorizar velocidad)' }).click();
     await page.waitForTimeout(100);
     assert.equal(posts.at(-1).data.get('mask'), '0');
     await page.locator('#name').fill('OBDII');
@@ -89,6 +91,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     data.found = 'OBDII, SLEVE EVO';
     await page.waitForFunction(() => document.querySelector('#found').textContent.includes('OBDII, SLEVE EVO'));
     data.bt = true;
+    // Actualizar firmware: la imagen completa de 4 MB se rechaza en la pagina.
+    await page.setInputFiles('#fw', { name: 'GolfDashboard-ESP32-WROOM32-4MB.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(4194304, 0xff) });
+    await page.getByRole('button', { name: 'Actualizar firmware' }).click();
+    await page.waitForFunction(() => document.querySelector('#msg').textContent.includes('archivo completo de 4 MB'));
+    // Un archivo de actualizacion se sube con la clave de sesion.
+    posts.length = 0;
+    await page.setInputFiles('#fw', { name: 'GolfDashboard-actualizacion.bin', mimeType: 'application/octet-stream', buffer: Buffer.from([0xe9, 1, 2, 3]) });
+    await page.getByRole('button', { name: 'Actualizar firmware' }).click();
+    for (let i = 0; i < 50 && !posts.some(p => p.path === '/api/update'); i++) await page.waitForTimeout(100);
+    assert(posts.some(p => p.path === '/api/update'), 'no se envio la actualizacion');
     // Diesel informado por la ECU (PID 51): la referencia del AFR cambia y se indica.
     data.fuel = 'diesel'; data.reference = 14.5;
     await page.waitForFunction(() => document.querySelector('#cards').lastElementChild.textContent.includes('14.50 (diesel, informado por la ECU)'));

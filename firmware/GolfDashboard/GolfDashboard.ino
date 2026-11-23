@@ -14,6 +14,7 @@
 #include <ESPmDNS.h>
 #include <esp_gap_bt_api.h>
 #include <Preferences.h>
+#include <Update.h>
 #include <atomic>
 #include <string>
 #include "Config.h"
@@ -51,6 +52,9 @@ std::atomic<bool> bluetoothActive{false};
 std::atomic<bool> bluetoothRequested{false};
 std::atomic<bool> wifiOffRequested{false};
 std::atomic<bool> restartRequested{false};
+// Actualizacion del firmware desde la pagina (segunda particion de programa).
+bool updateAccepted = false;
+String updateMessage;
 bool wifiOn = false;
 String webToken;
 std::atomic<bool> reconnectRequested{false};
@@ -301,6 +305,41 @@ void configureNetwork() {
     reconnectRequested.store(true);
     request->send(200,"text/plain; charset=utf-8","Guardado. Reconectando Bluetooth; puede tardar varias decenas de segundos.");
   });
+  // Actualizar el firmware desde la pagina: se escribe en la otra particion y
+  // solo se arranca de ella si llego completa y verificada; si no, sigue la actual.
+  web.on("/api/update",HTTP_POST,
+    [](AsyncWebServerRequest* request) {
+      const bool ok = updateAccepted && Update.isFinished() && !Update.hasError();
+      request->send(ok ? 200 : 400, "text/plain; charset=utf-8",
+        ok ? "Firmware actualizado. Reiniciando; volve a abrir la pagina en unos 20 s." : updateMessage);
+      if (ok) restartRequested.store(true);
+    },
+    [](AsyncWebServerRequest* request, const String& filename, size_t index, uint8_t* data, size_t len, bool final) {
+      if (index == 0) {
+        updateAccepted = false;
+        updateMessage = "No se recibio el archivo.";
+        const AsyncWebHeader* header = request->getHeader("X-Golf-Token");
+        if (!header || header->value() != webToken) { updateMessage = "Sesion invalida: recarga la pagina."; return; }
+        if (len == 0 || data[0] != 0xE9) {
+          updateMessage = "Ese archivo no es una actualizacion. Usar GolfDashboard-actualizacion.bin (no la imagen completa de 4 MB).";
+          return;
+        }
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) { updateMessage = String("No se pudo iniciar: ") + Update.errorString(); return; }
+        updateAccepted = true;
+        Serial.printf("Actualizacion: recibiendo %s\n", filename.c_str());
+      }
+      if (!updateAccepted) return;
+      if (Update.write(data, len) != len) {
+        updateMessage = String("Fallo al escribir: ") + Update.errorString();
+        updateAccepted = false;
+        Update.abort();
+        return;
+      }
+      if (final) {
+        if (Update.end(true)) Serial.printf("Actualizacion completa: %u bytes.\n", unsigned(index + len));
+        else { updateMessage = String("Archivo incompleto o danado: ") + Update.errorString(); updateAccepted = false; }
+      }
+    });
   web.on("/api/connect",HTTP_POST,[](AsyncWebServerRequest* request) {
     if (!allowWebWrite(request)) return;
     const bool soloPantalla = postArg(request,"soloPantalla") == "1";
