@@ -5,10 +5,10 @@
   "flash_frequency_MHz": 40,
   "write_address": "0x0",
   "source": "firmware/GolfDashboardWiFi/GolfDashboardWiFi.ino",
-  "source_sha256": "1eae5b505130e98920de5e2782d706d605ebe0ac25173609cdabc26e9668eb14",
-  "merged_sha256": "dabbd073e994d344d0e88880e16e7d7f1009a2b496aa3510f01e51c77ee16b2d",
+  "source_sha256": "83feb5949018b4c5e44f98b7725bd85861dceb15a324430ff8ccce24fc19911d",
+  "merged_sha256": "a0fe42efaeb4c8fac2e8c5fa39b36159eef4f69266904811fd23ce3f2ad331bd",
   "core": "esp32:esp32@3.3.4",
   "libraries": ["Adafruit SSD1306 2.5.15", "Adafruit GFX Library 1.12.4", "Adafruit BusIO 1.17.4", "ESP Async WebServer 3.12.1", "Async TCP 3.5.0"],
-  "commit": "fc00b59c2f3efc936d66ca262229265a77efa8e3",
+  "commit": "3b46f054e7905e5309d5265c1d9377febaf3f1a0",
   "hardware_tested": false
 }
