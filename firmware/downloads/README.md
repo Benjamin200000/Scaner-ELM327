@@ -1,4 +1,11 @@
-# Descargar Golf Dashboard ESP32 Wi-Fi v3
+# Descargar Golf Dashboard ESP32
+
+## Todo junto en un archivo
+
+[`GolfDashboard-ESP32-completo.zip`](GolfDashboard-ESP32-completo.zip): firmware (codigo fuente),
+pagina del panel, herramientas, pruebas, imagen completa, archivo de actualizacion, cargador web,
+documentacion y licencias. Se regenera en cada compilacion. Empezar por `LEEME.txt`.
+
 
 ## Lo más fácil: cargador web, sin instalar nada
 

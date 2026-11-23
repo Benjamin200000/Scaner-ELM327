@@ -114,12 +114,26 @@ jobs:
           # Carga completa contra un ESP32 simulado, incluido el error 201 y el reintento a 115200.
           NODE_PATH="$RUNNER_TEMP/pw/node_modules:$PWD/node_modules" node probar-escritura.cjs
 
+      - name: Armar el paquete con todo lo del ESP32
+        run: |
+          P="$RUNNER_TEMP/paquete/GolfDashboard-ESP32"
+          rm -rf "$RUNNER_TEMP/paquete" && mkdir -p "$P/.github/workflows"
+          rsync -a --exclude node_modules --exclude package-lock.json \
+            --exclude GolfDashboard-ESP32-v3-WiFi.zip --exclude GolfDashboard-ESP32-completo.zip \
+            firmware firmware-cargador "$P/"
+          cp .github/workflows/firmware-esp32.yml "$P/.github/workflows/"
+          cp firmware/downloads/LEEME-PAQUETE.txt "$P/LEEME.txt"
+          rm -f firmware/downloads/GolfDashboard-ESP32-completo.zip
+          (cd "$RUNNER_TEMP/paquete" && zip -qr9 "$GITHUB_WORKSPACE/firmware/downloads/GolfDashboard-ESP32-completo.zip" GolfDashboard-ESP32)
+          unzip -l firmware/downloads/GolfDashboard-ESP32-completo.zip | tail -1
+
       - uses: actions/upload-artifact@v4
         with:
           name: GolfDashboard-ESP32
           path: |
             firmware/downloads/GolfDashboard-ESP32-WROOM32-*
             firmware/downloads/GolfDashboard-actualizacion*
+            firmware/downloads/GolfDashboard-ESP32-completo.zip
             firmware-cargador/Cargar-GolfDashboard-ESP32.html
           if-no-files-found: error
 
@@ -128,7 +142,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add firmware/downloads/GolfDashboard-ESP32-WROOM32-* firmware/downloads/GolfDashboard-actualizacion* firmware-cargador/Cargar-GolfDashboard-ESP32.html
+          git add firmware/downloads/GolfDashboard-ESP32-WROOM32-* firmware/downloads/GolfDashboard-actualizacion* firmware/downloads/GolfDashboard-ESP32-completo.zip firmware-cargador/Cargar-GolfDashboard-ESP32.html
           if git diff --cached --quiet; then echo "Sin cambios"; exit 0; fi
           git commit -m "Compilar firmware ESP32 y cargador web (automático, $GITHUB_SHA)"
           git push

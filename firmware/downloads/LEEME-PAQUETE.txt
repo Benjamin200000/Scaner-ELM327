@@ -1,0 +1,20 @@
+GOLF DASHBOARD ESP32 - TODO LO DEL ESP32 EN UN ARCHIVO
+
+Para cargar el ESP32 (sin instalar nada):
+  firmware-cargador/Cargar-GolfDashboard-ESP32.html
+  Abrirlo con doble clic en Chrome o Edge, velocidad 115200, pulsar Cargar.
+
+Para actualizar despues desde la pagina del ESP32 (sin cable):
+  firmware/downloads/GolfDashboard-actualizacion.bin
+
+Imagen completa para otras herramientas (direccion 0x0):
+  firmware/downloads/GolfDashboard-ESP32-WROOM32-4MB.bin
+
+Codigo fuente:
+  firmware/GolfDashboardWiFi/GolfDashboardWiFi.ino   (version de un archivo, la que se publica)
+  firmware/GolfDashboard/                            (misma version en varios archivos)
+  firmware/web/panel.html                            (pagina del panel; regenerar con firmware/tools/generar-panel.py)
+
+Instrucciones completas: firmware/README.md
+Uso del cargador: firmware-cargador/README.md
+Compilacion automatica: .github/workflows/firmware-esp32.yml
