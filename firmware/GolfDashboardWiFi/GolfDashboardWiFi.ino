@@ -12,6 +12,7 @@
 #include <esp_gap_bt_api.h>
 #include <Preferences.h>
 #include <atomic>
+#include <string>
 #if !defined(CONFIG_BT_SPP_ENABLED)
 #error "Usar ESP32 Dev Module (WROOM-32), no S3/C3"
 #endif
@@ -536,6 +537,25 @@ bool allowWebWrite(AsyncWebServerRequest* request) {
   request->send(403,"text/plain; charset=utf-8","Recarga la página para obtener una sesión válida.");
   return false;
 }
+// ---- Diagnostico: por que se reinicio y cuanta memoria queda ----
+const char* resetReasonText() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "encendido";
+    case ESP_RST_SW: return "reinicio por software";
+    case ESP_RST_PANIC: return "CUELGUE (excepcion)";
+    case ESP_RST_INT_WDT: case ESP_RST_TASK_WDT: case ESP_RST_WDT: return "CUELGUE (watchdog)";
+    case ESP_RST_BROWNOUT: return "FALTA DE ENERGIA (brownout)";
+    case ESP_RST_EXT: return "boton EN/RST";
+    case ESP_RST_DEEPSLEEP: return "salida de reposo";
+    default: return "otro";
+  }
+}
+void logHeap(const char* where) {
+  Serial.printf("[%s] memoria libre %u, bloque mayor %u, minimo historico %u, equipos Wi-Fi %d, enlace %u, %lu s\n",
+                where, ESP.getFreeHeap(), ESP.getMaxAllocHeap(), ESP.getMinFreeHeap(),
+                WiFi.softAPgetStationNum(), static_cast<unsigned>(snapshot().link), (unsigned long)(millis() / 1000));
+}
+
 // Si el ELM aun no esta conectado, corta la busqueda Bluetooth en curso y la
 // pausa hasta 2 min (o hasta guardar ajustes): comparte radio con el Wi-Fi.
 void freeRadioForWeb() {
@@ -565,12 +585,17 @@ void configureNetwork() {
   WiFi.mode(WIFI_AP);
   WiFi.setSleep(false);
   if (!WiFi.softAP(WIFI_AP_NAME,WIFI_AP_PASSWORD,1,false,4)) Serial.println("No se pudo iniciar Wi-Fi AP.");
+  // Menos potencia de transmision = picos de consumo menores. Con Wi-Fi y
+  // Bluetooth juntos, una fuente USB floja puede reiniciar la placa (brownout).
+  // Dentro del auto el alcance sobra.
+  WiFi.setTxPower(WIFI_POWER_11dBm);
   char token[17]; snprintf(token,sizeof(token),"%08lx%08lx",(unsigned long)esp_random(),(unsigned long)esp_random());
   webToken = token;
   web.on("/",HTTP_GET,[this](AsyncWebServerRequest* request) {
     // Abrir el panel libera la radio: si se esta buscando el ELM, la busqueda
     // Bluetooth (hasta 32 s) dejaba la pagina a medio llegar, en negro.
     freeRadioForWeb();
+    logHeap("web GET /");
     // Comprimido y directo desde la flash: ~3 KB, sin copiarlo a la RAM.
     AsyncWebServerResponse* response = request->beginResponse(200,"text/html; charset=utf-8",WEB_UI_GZ,WEB_UI_GZ_LEN);
     response->addHeader("Content-Encoding","gzip");
@@ -578,6 +603,19 @@ void configureNetwork() {
   });
   // Clave de sesion para las escrituras (la pagina la pide aparte). Un sitio
   // ajeno no puede leerla: el navegador bloquea leer respuestas de otro origen.
+  // Diagnostico minimo: si esto carga y la pagina no, el problema es otro.
+  web.on("/diag",HTTP_GET,[this](AsyncWebServerRequest* request) {
+    logHeap("web GET /diag");
+    String out = "{\"reinicio\":" + jsonText(resetReasonText());
+    out += ",\"segundos\":" + String(millis() / 1000);
+    out += ",\"memoriaLibre\":" + String(ESP.getFreeHeap());
+    out += ",\"bloqueMayor\":" + String(ESP.getMaxAllocHeap());
+    out += ",\"minimoHistorico\":" + String(ESP.getMinFreeHeap());
+    out += ",\"equiposWifi\":" + String(WiFi.softAPgetStationNum());
+    out += ",\"enlace\":" + String(static_cast<unsigned>(snapshot().link)) + "}";
+    AsyncWebServerResponse* response = request->beginResponse(200,"application/json",out);
+    response->addHeader("Cache-Control","no-store"); request->send(response);
+  });
   web.on("/api/token",HTTP_GET,[this](AsyncWebServerRequest* request) {
     AsyncWebServerResponse* response = request->beginResponse(200,"text/plain",webToken);
     response->addHeader("Cache-Control","no-store"); request->send(response);
@@ -775,6 +813,27 @@ uint32_t bluetoothRetryDelay(unsigned failures) {
   return 300000;
 }
 
+// Tras conectar por nombre (que escanea), guarda la MAC del adaptador: las
+// conexiones siguientes van directo por direccion, sin escanear, y la radio
+// queda libre para el Wi-Fi. Se puede borrar o cambiar desde el panel.
+void learnAdapterAddress(const AdapterSettings& wanted) {
+  BTScanResults* results = elm.getScanResults();
+  if (!results) return;
+  for (int i = 0; i < results->getCount(); ++i) {
+    BTAdvertisedDevice* device = results->getDevice(i);
+    if (!device || !device->haveName() || device->getName() != std::string(wanted.name)) continue;
+    const String mac = device->getAddress().toString(true);
+    AdapterSettings next = adapterSnapshot();
+    if (strcmp(next.name, wanted.name) != 0 || next.mac[0]) return;  // cambiaron los ajustes
+    strlcpy(next.mac, mac.c_str(), sizeof(next.mac));
+    if (preferences.putBytes("adapter", &next, sizeof(next)) != sizeof(next)) return;
+    portENTER_CRITICAL(&guard); adapter = next; portEXIT_CRITICAL(&guard);
+    Serial.printf("ELM %s encontrado: MAC %s guardada; no se volvera a escanear.\n", wanted.name, mac.c_str());
+    return;
+  }
+  Serial.println("ELM conectado por nombre; su MAC no aparecio en la busqueda (se seguira usando el nombre).");
+}
+
 // Espera, pero corta en cuanto se guarda una configuracion nueva desde el panel.
 void waitOrReconfigure(uint32_t ms) {
   const uint32_t start = millis();
@@ -809,6 +868,7 @@ void obdTask() {
       continue;
     }
     btFailures = 0;
+    if (!wanted.mac[0]) learnAdapterAddress(wanted);
     linkState(Link::Initializing);
     if (!initializeElm()) {
       Serial.printf("No se pudo iniciar OBD. Ultima respuesta: %s\n", response);
@@ -931,6 +991,7 @@ void render(const Dashboard& d) {
 
 void setup() {
   Serial.begin(115200);
+  Serial.printf("\nGolf Dashboard: arranque por %s.\n", resetReasonText());
   preferences.begin("golfdash",false);
   pinMode(PAGE_BUTTON_PIN, INPUT_PULLUP);
   Wire.begin(OLED_SDA, OLED_SCL, OLED_I2C_HZ);
@@ -953,6 +1014,8 @@ void loop() {
   static bool lastRaw = HIGH, stable = HIGH;
   static uint32_t buttonChangedAt = 0;
   uint32_t now = millis();
+  static uint32_t lastHeapLog = 0;
+  if (uint32_t(now - lastHeapLog) >= 10000) { lastHeapLog = now; logHeap("estado"); }
   bool raw = digitalRead(PAGE_BUTTON_PIN);
   if (raw != lastRaw) { lastRaw = raw; buttonChangedAt = now; }
   if (raw != stable && uint32_t(now - buttonChangedAt) >= BUTTON_DEBOUNCE_MS) {

@@ -40,6 +40,14 @@ Se entrega tambien **GolfDashboardWiFi.ino**, un archivo unico que contiene los 
 
 El panel esta en `web/panel.html`. Despues de editarlo, correr `python3 -I tools/generar-panel.py`: lo comprime (gzip) y lo incrusta en `GolfDashboard/WebUi.h` y en `GolfDashboardWiFi.ino`. Se sirve comprimido directo desde la flash (unos 3 KB en vez de 6,7 KB, sin copiarlo a la RAM). El workflow comprueba que lo incrustado coincida con `panel.html`. Abrir el panel corta una busqueda Bluetooth en curso si el ELM no esta conectado, para que la pagina llegue completa.
 
+### Diagnostico
+
+- Al arrancar, el Monitor serie (o "Ver mensajes de la placa" en el cargador web) indica el motivo: encendido, boton EN, CUELGUE o FALTA DE ENERGIA (brownout).
+- Cada 10 s informa memoria libre, bloque mayor disponible, minimo historico, equipos conectados al Wi-Fi y estado del enlace; y cada vez que se pide la pagina.
+- `http://192.168.4.1/diag` devuelve esos datos en una respuesta minima: si `/diag` carga y la pagina no, el problema no es la red.
+- Tras conectar al ELM por nombre se guarda su MAC y las conexiones siguientes no escanean. Se puede borrar desde el panel.
+- La potencia Wi-Fi se fija en 11 dBm para reducir picos de consumo con Wi-Fi y Bluetooth juntos.
+
 ### Otros vehiculos (no solo VAG)
 
 El firmware no depende de la marca: usa deteccion automatica de protocolo (`ATSP0`: CAN 11/29 bit, ISO 9141, KWP2000 y J1850) y solo datos OBD-II estandar (modo 01).
